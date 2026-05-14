@@ -274,6 +274,79 @@ func TestDiffViewerCtrlDDoesNotQuit(t *testing.T) {
 	}
 }
 
+func TestDiffViewerMouseWheelScrolls(t *testing.T) {
+	tests := []struct {
+		name   string
+		start  int
+		mouse  vaxis.Mouse
+		want   int
+		keys   string
+		noKeys bool
+	}{
+		{
+			name:  "wheel down scrolls down",
+			start: 10,
+			mouse: vaxis.Mouse{Button: vaxis.MouseWheelDown},
+			want:  11,
+			keys:  "g",
+		},
+		{
+			name:  "wheel up scrolls up",
+			start: 10,
+			mouse: vaxis.Mouse{Button: vaxis.MouseWheelUp},
+			want:  9,
+			keys:  "g",
+		},
+		{
+			name:  "wheel up clamps at top",
+			start: 1,
+			mouse: vaxis.Mouse{Button: vaxis.MouseWheelUp},
+			want:  0,
+		},
+		{
+			name:   "non-wheel mouse does not scroll",
+			start:  10,
+			mouse:  vaxis.Mouse{Button: vaxis.MouseLeftButton},
+			want:   10,
+			keys:   "g",
+			noKeys: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			viewer := newTestDiffViewer(100, 10)
+			viewer.scroll = tt.start
+			if tt.keys != "" {
+				viewer.keys.Set(tt.keys, time.Now())
+			}
+
+			cmd, err := viewer.HandleEvent(tt.mouse)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tt.mouse.Button == vaxis.MouseLeftButton && cmd != CommandNone {
+				t.Fatalf("command = %v, want %v", cmd, CommandNone)
+			}
+			if tt.mouse.Button != vaxis.MouseLeftButton && cmd != CommandRedraw {
+				t.Fatalf("command = %v, want %v", cmd, CommandRedraw)
+			}
+			if viewer.scroll != tt.want {
+				t.Fatalf("scroll = %d, want %d", viewer.scroll, tt.want)
+			}
+			if tt.noKeys {
+				if viewer.keys.Pending() != tt.keys {
+					t.Fatalf("pending keys = %q, want %q", viewer.keys.Pending(), tt.keys)
+				}
+				return
+			}
+			if viewer.keys.Pending() != "" {
+				t.Fatalf("pending keys = %q, want empty", viewer.keys.Pending())
+			}
+		})
+	}
+}
+
 func newTestDiffViewer(rows int, height int) *diffViewer {
 	viewer := &diffViewer{
 		rows: make([]diff.Row, rows),
