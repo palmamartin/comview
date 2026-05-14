@@ -117,6 +117,15 @@ func (d *diffViewer) Paint(win vaxis.Window) {
 
 func (d *diffViewer) printRow(win vaxis.Window, row int, diffRow diff.Row) {
 	d.fillRowBackground(win, row, diffRow.Kind)
+	if diffRow.Kind == diff.RowHunk && diffRow.Prefix != "" && diffRow.Code != "" {
+		segments := []vaxis.Segment{
+			{Text: diffRow.Prefix, Style: d.styleFor(diff.RowHunk)},
+			{Text: diffRow.Code, Style: d.dimStyle()},
+		}
+		printSegmentsAt(win, 0, row, segments...)
+		return
+	}
+
 	if diffRow.Gutter != "" || diffRow.Marker != "" {
 		segments := []vaxis.Segment{
 			{Text: diffRow.Gutter, Style: d.gutterStyle(diffRow.Kind)},
@@ -237,6 +246,13 @@ func (d *diffViewer) ensureColorScheme() {
 func (d *diffViewer) baseStyle() vaxis.Style {
 	return vaxis.Style{
 		Foreground: d.scheme.Foreground,
+		Background: d.scheme.Background,
+	}
+}
+
+func (d *diffViewer) dimStyle() vaxis.Style {
+	return vaxis.Style{
+		Foreground: d.scheme.Dim,
 		Background: d.scheme.Background,
 	}
 }

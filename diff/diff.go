@@ -52,6 +52,7 @@ type Row struct {
 	Gutter      string
 	Marker      string
 	Code        string
+	Prefix      string
 	InlineSpans []InlineSpan
 }
 

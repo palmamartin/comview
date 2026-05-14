@@ -39,8 +39,17 @@ func TestDiffViewerFallsBackToRGBDiffColors(t *testing.T) {
 func TestDefaultColorSchemeUsesOnlyRGBColors(t *testing.T) {
 	scheme := DefaultColorScheme()
 	colors := []vaxis.Color{
+		scheme.Base.Foreground,
+		scheme.Base.Background,
+		scheme.Base.Red,
+		scheme.Base.Green,
+		scheme.Base.Yellow,
+		scheme.Base.Blue,
+		scheme.Base.Magenta,
+		scheme.Base.Cyan,
 		scheme.Foreground,
 		scheme.Background,
+		scheme.Dim,
 		scheme.Header,
 		scheme.Muted,
 		scheme.Hunk,
@@ -58,6 +67,15 @@ func TestDefaultColorSchemeUsesOnlyRGBColors(t *testing.T) {
 		if params := color.Params(); len(params) != 3 {
 			t.Fatalf("color %v has params %v, want RGB params", color, params)
 		}
+	}
+}
+
+func TestColorSchemeDimIsBlendedRGB(t *testing.T) {
+	scheme := DefaultColorScheme()
+	want := blendRGB(scheme.Foreground, scheme.Background, dimBlend)
+
+	if scheme.Dim != want {
+		t.Fatalf("dim = %v, want %v", scheme.Dim, want)
 	}
 }
 

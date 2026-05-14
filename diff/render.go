@@ -62,13 +62,24 @@ func (d Document) RowsWithOptions(options RenderOptions) []Row {
 
 		for _, hunk := range file.Hunks {
 			if options.ShowHunkHeaders {
-				rows = append(rows, Row{Kind: RowHunk, Text: hunk.Header, FileName: syntaxName})
+				rows = append(rows, renderHunkHeaderRow(syntaxName, hunk))
 			}
 			rows = append(rows, renderHunkRows(syntaxName, hunk, options)...)
 		}
 	}
 
 	return rows
+}
+
+func renderHunkHeaderRow(fileName string, hunk Hunk) Row {
+	prefix, code := splitHunkHeader(hunk.Header)
+	return Row{
+		Kind:     RowHunk,
+		Text:     hunk.Header,
+		FileName: fileName,
+		Prefix:   prefix,
+		Code:     code,
+	}
 }
 
 func renderHunkRows(fileName string, hunk Hunk, options RenderOptions) []Row {
@@ -146,6 +157,19 @@ func splitLine(line Line) (marker string, code string) {
 		return "", line.Text
 	}
 	return line.Text[:1], line.Text[1:]
+}
+
+func splitHunkHeader(header string) (prefix string, code string) {
+	const marker = " @@"
+	end := strings.Index(header, marker)
+	if end == -1 {
+		return header, ""
+	}
+	prefixEnd := end + len(marker)
+	if prefixEnd >= len(header) {
+		return header, ""
+	}
+	return header[:prefixEnd], header[prefixEnd:]
 }
 
 func lineNumber(number int) string {

@@ -161,3 +161,29 @@ func TestRowsUseSyntaxFileName(t *testing.T) {
 	}
 	t.Fatal("missing add row")
 }
+
+func TestRowsSplitHunkHeaderContext(t *testing.T) {
+	doc, err := Parse(`diff --git a/main.go b/main.go
+--- a/main.go
++++ b/main.go
+@@ -106,7 +111,57 @@ func (d *diffViewer) Paint(win vaxis.Window) {
+ unchanged
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, row := range doc.Rows() {
+		if row.Kind != RowHunk {
+			continue
+		}
+		if row.Prefix != "@@ -106,7 +111,57 @@" {
+			t.Fatalf("prefix = %q", row.Prefix)
+		}
+		if row.Code != " func (d *diffViewer) Paint(win vaxis.Window) {" {
+			t.Fatalf("code = %q", row.Code)
+		}
+		return
+	}
+	t.Fatal("missing hunk row")
+}

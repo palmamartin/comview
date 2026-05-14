@@ -16,6 +16,7 @@ const (
 	maxChangedLineBlendStep = 0.22
 	inlineChangeBlend       = 0.32
 	minInlineChangeContrast = 1.70
+	dimBlend                = 0.55
 )
 
 type TerminalColors struct {
@@ -29,9 +30,22 @@ type TerminalColors struct {
 	Cyan       vaxis.Color
 }
 
+type BaseColors struct {
+	Foreground vaxis.Color
+	Background vaxis.Color
+	Red        vaxis.Color
+	Green      vaxis.Color
+	Yellow     vaxis.Color
+	Blue       vaxis.Color
+	Magenta    vaxis.Color
+	Cyan       vaxis.Color
+}
+
 type ColorScheme struct {
+	Base         BaseColors
 	Foreground   vaxis.Color
 	Background   vaxis.Color
+	Dim          vaxis.Color
 	Header       vaxis.Color
 	Muted        vaxis.Color
 	Hunk         vaxis.Color
@@ -45,17 +59,35 @@ type ColorScheme struct {
 	DeleteInline vaxis.Color
 }
 
-func DefaultColorScheme() ColorScheme {
-	scheme := ColorScheme{
+func DefaultBaseColors() BaseColors {
+	return BaseColors{
 		Foreground: vaxis.RGBColor(0xd7, 0xde, 0xe9),
 		Background: vaxis.RGBColor(0x10, 0x14, 0x19),
-		Header:     vaxis.RGBColor(0x56, 0xb6, 0xc2),
-		Muted:      vaxis.RGBColor(0x7f, 0x88, 0x96),
-		Hunk:       vaxis.RGBColor(0xc6, 0x78, 0xdd),
-		Blue:       vaxis.RGBColor(0x61, 0xaf, 0xef),
+		Red:        vaxis.RGBColor(0xe0, 0x6c, 0x75),
+		Green:      vaxis.RGBColor(0x98, 0xc3, 0x79),
 		Yellow:     vaxis.RGBColor(0xe5, 0xc0, 0x7b),
-		Add:        vaxis.RGBColor(0x98, 0xc3, 0x79),
-		Delete:     vaxis.RGBColor(0xe0, 0x6c, 0x75),
+		Blue:       vaxis.RGBColor(0x61, 0xaf, 0xef),
+		Magenta:    vaxis.RGBColor(0xc6, 0x78, 0xdd),
+		Cyan:       vaxis.RGBColor(0x56, 0xb6, 0xc2),
+	}
+}
+
+func DefaultColorScheme() ColorScheme {
+	return NewColorScheme(DefaultBaseColors())
+}
+
+func NewColorScheme(base BaseColors) ColorScheme {
+	scheme := ColorScheme{
+		Base:       base,
+		Foreground: base.Foreground,
+		Background: base.Background,
+		Header:     base.Cyan,
+		Muted:      blendRGB(base.Foreground, base.Background, 0.44),
+		Hunk:       base.Magenta,
+		Blue:       base.Blue,
+		Yellow:     base.Yellow,
+		Add:        base.Green,
+		Delete:     base.Red,
 	}
 	scheme.RecomputeDerivedColors()
 	return scheme
@@ -63,33 +95,34 @@ func DefaultColorScheme() ColorScheme {
 
 func (s *ColorScheme) ApplyTerminalColors(colors TerminalColors) {
 	if colors.Foreground != vaxis.ColorDefault {
-		s.Foreground = colors.Foreground
+		s.Base.Foreground = colors.Foreground
 	}
 	if colors.Background != vaxis.ColorDefault {
-		s.Background = colors.Background
+		s.Base.Background = colors.Background
 	}
 	if colors.Red != vaxis.ColorDefault {
-		s.Delete = colors.Red
+		s.Base.Red = colors.Red
 	}
 	if colors.Green != vaxis.ColorDefault {
-		s.Add = colors.Green
+		s.Base.Green = colors.Green
 	}
 	if colors.Magenta != vaxis.ColorDefault {
-		s.Hunk = colors.Magenta
+		s.Base.Magenta = colors.Magenta
 	}
 	if colors.Cyan != vaxis.ColorDefault {
-		s.Header = colors.Cyan
+		s.Base.Cyan = colors.Cyan
 	}
 	if colors.Blue != vaxis.ColorDefault {
-		s.Blue = colors.Blue
+		s.Base.Blue = colors.Blue
 	}
 	if colors.Yellow != vaxis.ColorDefault {
-		s.Yellow = colors.Yellow
+		s.Base.Yellow = colors.Yellow
 	}
-	s.RecomputeDerivedColors()
+	*s = NewColorScheme(s.Base)
 }
 
 func (s *ColorScheme) RecomputeDerivedColors() {
+	s.Dim = blendRGB(s.Foreground, s.Background, dimBlend)
 	s.AddLine = changedLineBackground(s.Background, s.Add)
 	s.DeleteLine = changedLineBackground(s.Background, s.Delete)
 	s.AddInline = inlineChangeBackground(s.Background, s.Add)
