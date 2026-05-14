@@ -2,12 +2,19 @@ package tui
 
 import (
 	"context"
+	"math"
 	"time"
 
 	"git.sr.ht/~rockorager/vaxis"
 )
 
 const colorQueryTimeout = 150 * time.Millisecond
+
+const (
+	changedLineBlend        = 0.08
+	minChangedLineContrast  = 1.18
+	maxChangedLineBlendStep = 0.28
+)
 
 type TerminalColors struct {
 	Foreground vaxis.Color
@@ -26,20 +33,28 @@ type ColorScheme struct {
 	Header     vaxis.Color
 	Muted      vaxis.Color
 	Hunk       vaxis.Color
+	Blue       vaxis.Color
+	Yellow     vaxis.Color
 	Add        vaxis.Color
+	AddLine    vaxis.Color
 	Delete     vaxis.Color
+	DeleteLine vaxis.Color
 }
 
 func DefaultColorScheme() ColorScheme {
-	return ColorScheme{
+	scheme := ColorScheme{
 		Foreground: vaxis.RGBColor(0xd7, 0xde, 0xe9),
 		Background: vaxis.RGBColor(0x10, 0x14, 0x19),
 		Header:     vaxis.RGBColor(0x56, 0xb6, 0xc2),
 		Muted:      vaxis.RGBColor(0x7f, 0x88, 0x96),
 		Hunk:       vaxis.RGBColor(0xc6, 0x78, 0xdd),
+		Blue:       vaxis.RGBColor(0x61, 0xaf, 0xef),
+		Yellow:     vaxis.RGBColor(0xe5, 0xc0, 0x7b),
 		Add:        vaxis.RGBColor(0x98, 0xc3, 0x79),
 		Delete:     vaxis.RGBColor(0xe0, 0x6c, 0x75),
 	}
+	scheme.RecomputeDerivedColors()
+	return scheme
 }
 
 func (s *ColorScheme) ApplyTerminalColors(colors TerminalColors) {
@@ -61,6 +76,18 @@ func (s *ColorScheme) ApplyTerminalColors(colors TerminalColors) {
 	if colors.Cyan != vaxis.ColorDefault {
 		s.Header = colors.Cyan
 	}
+	if colors.Blue != vaxis.ColorDefault {
+		s.Blue = colors.Blue
+	}
+	if colors.Yellow != vaxis.ColorDefault {
+		s.Yellow = colors.Yellow
+	}
+	s.RecomputeDerivedColors()
+}
+
+func (s *ColorScheme) RecomputeDerivedColors() {
+	s.AddLine = changedLineBackground(s.Background, s.Add)
+	s.DeleteLine = changedLineBackground(s.Background, s.Delete)
 }
 
 type TerminalColorReceiver interface {
@@ -112,4 +139,73 @@ func queryIndexedTerminalColor(vx *vaxis.Vaxis, index uint8) vaxis.Color {
 	return queryTerminalColor(vx.CanReportColor(), func() vaxis.Color {
 		return vx.QueryColor(vaxis.IndexColor(index))
 	})
+}
+
+func changedLineBackground(background vaxis.Color, accent vaxis.Color) vaxis.Color {
+	blend := changedLineBlend
+	color := blendRGB(background, accent, blend)
+	for contrastRatio(background, color) < minChangedLineContrast && blend < maxChangedLineBlendStep {
+		blend += 0.04
+		color = blendRGB(background, accent, blend)
+	}
+	return color
+}
+
+func blendRGB(base vaxis.Color, accent vaxis.Color, amount float64) vaxis.Color {
+	br, bg, bb := rgb(base)
+	ar, ag, ab := rgb(accent)
+
+	return vaxis.RGBColor(
+		blendChannel(br, ar, amount),
+		blendChannel(bg, ag, amount),
+		blendChannel(bb, ab, amount),
+	)
+}
+
+func blendChannel(base uint8, accent uint8, amount float64) uint8 {
+	value := float64(base) + (float64(accent)-float64(base))*amount
+	return uint8(math.Round(value))
+}
+
+func contrastRatio(a vaxis.Color, b vaxis.Color) float64 {
+	l1 := relativeLuminance(a)
+	l2 := relativeLuminance(b)
+	if l1 < l2 {
+		l1, l2 = l2, l1
+	}
+	return (l1 + 0.05) / (l2 + 0.05)
+}
+
+func relativeLuminance(color vaxis.Color) float64 {
+	r, g, b := rgb(color)
+	return 0.2126*linearized(float64(r)/255) +
+		0.7152*linearized(float64(g)/255) +
+		0.0722*linearized(float64(b)/255)
+}
+
+func linearized(channel float64) float64 {
+	if channel <= 0.03928 {
+		return channel / 12.92
+	}
+	return math.Pow((channel+0.055)/1.055, 2.4)
+}
+
+func rgb(color vaxis.Color) (uint8, uint8, uint8) {
+	params := color.Params()
+	if len(params) != 3 {
+		return 0, 0, 0
+	}
+	return params[0], params[1], params[2]
+}
+
+func (s ColorScheme) Cyan() vaxis.Color {
+	return s.Header
+}
+
+func (s ColorScheme) Green() vaxis.Color {
+	return s.Add
+}
+
+func (s ColorScheme) Magenta() vaxis.Color {
+	return s.Hunk
 }

@@ -137,3 +137,27 @@ func TestDefaultRenderOptionsShowLineNumbers(t *testing.T) {
 		t.Fatal("DefaultRenderOptions().ShowLineNumbers = false, want true")
 	}
 }
+
+func TestRowsUseSyntaxFileName(t *testing.T) {
+	doc, err := Parse(`diff --git a/old.go b/new.go
+--- a/old.go
++++ b/new.go
+@@ -1 +1 @@
+-old
++new
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	rows := doc.Rows()
+	for _, row := range rows {
+		if row.Kind == RowAdd {
+			if row.FileName != "new.go" {
+				t.Fatalf("add row file name = %q, want new.go", row.FileName)
+			}
+			return
+		}
+	}
+	t.Fatal("missing add row")
+}

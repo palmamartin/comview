@@ -14,7 +14,8 @@ func Run(input string) error {
 	}
 
 	app, err := NewApp(&diffViewer{
-		rows: doc.RowsWithOptions(diff.DefaultRenderOptions()),
+		rows:        doc.RowsWithOptions(diff.DefaultRenderOptions()),
+		highlighter: NewSyntaxHighlighter(),
 	}, vaxis.Options{})
 	if err != nil {
 		return err
@@ -24,15 +25,19 @@ func Run(input string) error {
 }
 
 type diffViewer struct {
-	rows   []diff.Row
-	scroll int
-	height int
-	scheme ColorScheme
+	rows        []diff.Row
+	scroll      int
+	height      int
+	scheme      ColorScheme
+	highlighter *SyntaxHighlighter
 }
 
 func (d *diffViewer) SetTerminalColors(colors TerminalColors) {
 	d.ensureColorScheme()
 	d.scheme.ApplyTerminalColors(colors)
+	if d.highlighter != nil {
+		d.highlighter.SetColorScheme(d.scheme)
+	}
 }
 
 func (d *diffViewer) HandleEvent(ev vaxis.Event) (Command, error) {
@@ -106,7 +111,57 @@ func (d *diffViewer) Paint(win vaxis.Window) {
 	printAt(win, 10, 0, "j/k or arrows scroll, q quits", mutedStyle)
 
 	for row, diffRow := range d.visibleRows() {
-		printAt(win, 0, row+1, diffRow.Text, d.styleFor(diffRow.Kind))
+		d.printRow(win, row+1, diffRow)
+	}
+}
+
+func (d *diffViewer) printRow(win vaxis.Window, row int, diffRow diff.Row) {
+	d.fillRowBackground(win, row, diffRow.Kind)
+	if diffRow.Gutter != "" || diffRow.Marker != "" {
+		segments := []vaxis.Segment{
+			{Text: diffRow.Gutter, Style: d.gutterStyle(diffRow.Kind)},
+			{Text: diffRow.Marker, Style: d.styleFor(diffRow.Kind)},
+		}
+		if diffRow.Code != "" {
+			segments = append(segments, d.highlighter.Highlight(diffRow.FileName, diffRow.Code, d.codeStyle(diffRow.Kind))...)
+		}
+		printSegmentsAt(win, 0, row, segments...)
+		return
+	}
+
+	if diffRow.Code == "" {
+		printAt(win, 0, row, diffRow.Text, d.styleFor(diffRow.Kind))
+		return
+	}
+
+	style := d.styleFor(diffRow.Kind)
+	segments := []vaxis.Segment{
+		{Text: diffRow.Gutter, Style: d.styleFor(diff.RowMeta)},
+		{Text: diffRow.Marker, Style: style},
+	}
+	segments = append(segments, d.highlighter.Highlight(diffRow.FileName, diffRow.Code, d.codeStyle(diffRow.Kind))...)
+	printSegmentsAt(win, 0, row, segments...)
+}
+
+func (d *diffViewer) fillRowBackground(win vaxis.Window, row int, kind diff.RowKind) {
+	if kind != diff.RowAdd && kind != diff.RowDelete {
+		return
+	}
+
+	style := d.styleFor(kind)
+	width, height := win.Size()
+	if row >= height {
+		return
+	}
+
+	for col := 0; col < width; col++ {
+		win.SetCell(col, row, vaxis.Cell{
+			Character: vaxis.Character{
+				Grapheme: " ",
+				Width:    1,
+			},
+			Style: style,
+		})
 	}
 }
 
@@ -152,12 +207,12 @@ func (d *diffViewer) styleFor(kind diff.RowKind) vaxis.Style {
 	case diff.RowAdd:
 		return vaxis.Style{
 			Foreground: d.scheme.Add,
-			Background: d.scheme.Background,
+			Background: d.scheme.AddLine,
 		}
 	case diff.RowDelete:
 		return vaxis.Style{
 			Foreground: d.scheme.Delete,
-			Background: d.scheme.Background,
+			Background: d.scheme.DeleteLine,
 		}
 	case diff.RowMeta, diff.RowPreamble, diff.RowNoNewline:
 		return vaxis.Style{
@@ -182,15 +237,44 @@ func (d *diffViewer) baseStyle() vaxis.Style {
 	}
 }
 
+func (d *diffViewer) codeStyle(kind diff.RowKind) vaxis.Style {
+	style := d.baseStyle()
+	switch kind {
+	case diff.RowAdd:
+		style.Background = d.scheme.AddLine
+	case diff.RowDelete:
+		style.Background = d.scheme.DeleteLine
+	}
+	return style
+}
+
+func (d *diffViewer) gutterStyle(kind diff.RowKind) vaxis.Style {
+	style := vaxis.Style{
+		Foreground: d.scheme.Muted,
+		Background: d.scheme.Background,
+	}
+	switch kind {
+	case diff.RowAdd:
+		style.Background = d.scheme.AddLine
+	case diff.RowDelete:
+		style.Background = d.scheme.DeleteLine
+	}
+	return style
+}
+
 func printAt(win vaxis.Window, col int, row int, text string, style vaxis.Style) {
+	printSegmentsAt(win, col, row, vaxis.Segment{
+		Text:  text,
+		Style: style,
+	})
+}
+
+func printSegmentsAt(win vaxis.Window, col int, row int, segments ...vaxis.Segment) {
 	width, height := win.Size()
 	if col >= width || row >= height {
 		return
 	}
 
 	line := win.New(col, row, -1, 1)
-	line.PrintTruncate(0, vaxis.Segment{
-		Text:  text,
-		Style: style,
-	})
+	line.PrintTruncate(0, segments...)
 }

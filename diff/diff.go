@@ -46,8 +46,12 @@ const (
 )
 
 type Row struct {
-	Kind RowKind
-	Text string
+	Kind     RowKind
+	Text     string
+	FileName string
+	Gutter   string
+	Marker   string
+	Code     string
 }
 
 type RowKind int
@@ -218,5 +222,25 @@ func fileName(file File) string {
 		return file.Header[0]
 	default:
 		return "(unknown file)"
+	}
+}
+
+func syntaxFileName(file File) string {
+	switch {
+	case file.NewName != "" && file.NewName != "/dev/null":
+		return stripDiffPathPrefix(file.NewName)
+	case file.OldName != "" && file.OldName != "/dev/null":
+		return stripDiffPathPrefix(file.OldName)
+	default:
+		return fileName(file)
+	}
+}
+
+func stripDiffPathPrefix(name string) string {
+	switch {
+	case strings.HasPrefix(name, "a/"), strings.HasPrefix(name, "b/"):
+		return name[2:]
+	default:
+		return name
 	}
 }

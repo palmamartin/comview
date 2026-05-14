@@ -45,8 +45,10 @@ func (d Document) RowsWithOptions(options RenderOptions) []Row {
 	}
 
 	for _, file := range d.Files {
+		name := fileName(file)
+		syntaxName := syntaxFileName(file)
 		if options.ShowFileHeaders {
-			rows = append(rows, Row{Kind: RowFile, Text: fileName(file)})
+			rows = append(rows, Row{Kind: RowFile, Text: name, FileName: syntaxName})
 		}
 
 		if options.ShowFileMetadata {
@@ -54,13 +56,13 @@ func (d Document) RowsWithOptions(options RenderOptions) []Row {
 				if strings.HasPrefix(line, "diff --git ") {
 					continue
 				}
-				rows = append(rows, Row{Kind: RowMeta, Text: line})
+				rows = append(rows, Row{Kind: RowMeta, Text: line, FileName: syntaxName})
 			}
 		}
 
 		for _, hunk := range file.Hunks {
 			if options.ShowHunkHeaders {
-				rows = append(rows, Row{Kind: RowHunk, Text: hunk.Header})
+				rows = append(rows, Row{Kind: RowHunk, Text: hunk.Header, FileName: syntaxName})
 			}
 			for _, line := range hunk.Lines {
 				if line.Kind == Context && !options.ShowContext {
@@ -70,10 +72,7 @@ func (d Document) RowsWithOptions(options RenderOptions) []Row {
 					continue
 				}
 
-				rows = append(rows, Row{
-					Kind: rowKind(line.Kind),
-					Text: renderLine(line, options),
-				})
+				rows = append(rows, renderRow(syntaxName, line, options))
 			}
 		}
 	}
@@ -81,14 +80,38 @@ func (d Document) RowsWithOptions(options RenderOptions) []Row {
 	return rows
 }
 
+func renderRow(fileName string, line Line, options RenderOptions) Row {
+	gutter := renderGutter(line, options)
+	marker, code := splitLine(line)
+	return Row{
+		Kind:     rowKind(line.Kind),
+		Text:     gutter + marker + code,
+		FileName: fileName,
+		Gutter:   gutter,
+		Marker:   marker,
+		Code:     code,
+	}
+}
+
 func renderLine(line Line, options RenderOptions) string {
+	return renderGutter(line, options) + line.Text
+}
+
+func renderGutter(line Line, options RenderOptions) string {
 	if !options.ShowLineNumbers {
-		return line.Text
+		return ""
 	}
 
 	oldNumber := lineNumber(line.OldLine)
 	newNumber := lineNumber(line.NewLine)
-	return fmt.Sprintf("%*s %*s │ %s", options.LineNumberWidth, oldNumber, options.LineNumberWidth, newNumber, line.Text)
+	return fmt.Sprintf("%*s %*s │ ", options.LineNumberWidth, oldNumber, options.LineNumberWidth, newNumber)
+}
+
+func splitLine(line Line) (marker string, code string) {
+	if line.Kind == NoNewline || line.Text == "" {
+		return "", line.Text
+	}
+	return line.Text[:1], line.Text[1:]
 }
 
 func lineNumber(number int) string {
