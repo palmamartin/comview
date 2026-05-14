@@ -84,6 +84,11 @@ type ClipboardProvider interface {
 	ClipboardText() string
 }
 
+type YankHighlighter interface {
+	HighlightYank(time.Time)
+	YankHighlightDuration() time.Duration
+}
+
 type App struct {
 	vx     *vaxis.Vaxis
 	root   Widget
@@ -172,6 +177,15 @@ func (a *App) handleEvent(ev vaxis.Event) (Command, error) {
 				a.vx.ClipboardPush(text)
 			}
 		}
+		if highlighter, ok := a.root.(YankHighlighter); ok {
+			duration := highlighter.YankHighlightDuration()
+			highlighter.HighlightYank(time.Now())
+			go func() {
+				time.Sleep(duration)
+				a.vx.PostEvent(vaxis.Redraw{})
+			}()
+		}
+		requestFrame = true
 	}
 	if cmd == CommandRedraw {
 		requestFrame = true

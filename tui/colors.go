@@ -18,6 +18,7 @@ const (
 	minInlineChangeContrast = 1.70
 	dimBlend                = 0.55
 	selectionBlend          = 0.40
+	yankHighlightBlend      = 0.50
 )
 
 type TerminalColors struct {
@@ -59,6 +60,7 @@ type ColorScheme struct {
 	DeleteLine   vaxis.Color
 	DeleteInline vaxis.Color
 	Selection    vaxis.Color
+	Yank         vaxis.Color
 }
 
 func DefaultBaseColors() BaseColors {
@@ -130,6 +132,7 @@ func (s *ColorScheme) RecomputeDerivedColors() {
 	s.AddInline = inlineChangeBackground(s.Background, s.Add)
 	s.DeleteInline = inlineChangeBackground(s.Background, s.Delete)
 	s.Selection = blendRGB(s.Background, s.Blue, selectionBlend)
+	s.Yank = blendRGB(s.Background, s.Yellow, yankHighlightBlend)
 }
 
 type TerminalColorReceiver interface {
