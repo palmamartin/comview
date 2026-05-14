@@ -1,0 +1,248 @@
+package diff
+
+import (
+	"bufio"
+	"fmt"
+	"regexp"
+	"strconv"
+	"strings"
+)
+
+type Document struct {
+	Preamble []string
+	Files    []File
+}
+
+type File struct {
+	Header  []string
+	OldName string
+	NewName string
+	Hunks   []Hunk
+}
+
+type Hunk struct {
+	Header   string
+	OldStart int
+	OldCount int
+	NewStart int
+	NewCount int
+	Lines    []Line
+}
+
+type Line struct {
+	Kind    LineKind
+	OldLine int
+	NewLine int
+	Text    string
+}
+
+type LineKind int
+
+const (
+	Context LineKind = iota
+	Add
+	Delete
+	NoNewline
+)
+
+type Row struct {
+	Kind RowKind
+	Text string
+}
+
+type RowKind int
+
+const (
+	RowPreamble RowKind = iota
+	RowFile
+	RowMeta
+	RowHunk
+	RowContext
+	RowAdd
+	RowDelete
+	RowNoNewline
+)
+
+var hunkHeader = regexp.MustCompile(`^@@ -([0-9]+)(?:,([0-9]+))? \+([0-9]+)(?:,([0-9]+))? @@`)
+
+func Parse(input string) (Document, error) {
+	var doc Document
+	var currentFile *File
+	var currentHunk *Hunk
+	oldLine := 0
+	newLine := 0
+
+	scanner := bufio.NewScanner(strings.NewReader(input))
+	scanner.Buffer(make([]byte, 1024), 1024*1024*8)
+
+	for scanner.Scan() {
+		line := scanner.Text()
+
+		if strings.HasPrefix(line, "diff --git ") {
+			doc.Files = append(doc.Files, File{
+				Header: []string{line},
+			})
+			currentFile = &doc.Files[len(doc.Files)-1]
+			currentHunk = nil
+			continue
+		}
+
+		if currentFile == nil {
+			doc.Preamble = append(doc.Preamble, line)
+			continue
+		}
+
+		if hunkHeader.MatchString(line) {
+			hunk, err := parseHunkHeader(line)
+			if err != nil {
+				return Document{}, err
+			}
+			currentFile.Hunks = append(currentFile.Hunks, hunk)
+			currentHunk = &currentFile.Hunks[len(currentFile.Hunks)-1]
+			oldLine = currentHunk.OldStart
+			newLine = currentHunk.NewStart
+			continue
+		}
+
+		if currentHunk == nil {
+			currentFile.Header = append(currentFile.Header, line)
+			if strings.HasPrefix(line, "--- ") {
+				currentFile.OldName = strings.TrimPrefix(line, "--- ")
+			}
+			if strings.HasPrefix(line, "+++ ") {
+				currentFile.NewName = strings.TrimPrefix(line, "+++ ")
+			}
+			continue
+		}
+
+		switch {
+		case strings.HasPrefix(line, "+"):
+			currentHunk.Lines = append(currentHunk.Lines, Line{
+				Kind:    Add,
+				NewLine: newLine,
+				Text:    line,
+			})
+			newLine++
+		case strings.HasPrefix(line, "-"):
+			currentHunk.Lines = append(currentHunk.Lines, Line{
+				Kind:    Delete,
+				OldLine: oldLine,
+				Text:    line,
+			})
+			oldLine++
+		case strings.HasPrefix(line, `\`):
+			currentHunk.Lines = append(currentHunk.Lines, Line{
+				Kind: NoNewline,
+				Text: line,
+			})
+		default:
+			currentHunk.Lines = append(currentHunk.Lines, Line{
+				Kind:    Context,
+				OldLine: oldLine,
+				NewLine: newLine,
+				Text:    line,
+			})
+			oldLine++
+			newLine++
+		}
+	}
+
+	if err := scanner.Err(); err != nil {
+		return Document{}, err
+	}
+
+	return doc, nil
+}
+
+func (d Document) Rows() []Row {
+	rows := make([]Row, 0)
+	for _, line := range d.Preamble {
+		rows = append(rows, Row{Kind: RowPreamble, Text: line})
+	}
+	for _, file := range d.Files {
+		rows = append(rows, Row{Kind: RowFile, Text: fileName(file)})
+		for _, line := range file.Header {
+			if strings.HasPrefix(line, "diff --git ") {
+				continue
+			}
+			rows = append(rows, Row{Kind: RowMeta, Text: line})
+		}
+		for _, hunk := range file.Hunks {
+			rows = append(rows, Row{Kind: RowHunk, Text: hunk.Header})
+			for _, line := range hunk.Lines {
+				rows = append(rows, Row{
+					Kind: rowKind(line.Kind),
+					Text: line.Text,
+				})
+			}
+		}
+	}
+	return rows
+}
+
+func parseHunkHeader(line string) (Hunk, error) {
+	matches := hunkHeader.FindStringSubmatch(line)
+	if matches == nil {
+		return Hunk{}, fmt.Errorf("invalid hunk header: %q", line)
+	}
+
+	oldStart, err := strconv.Atoi(matches[1])
+	if err != nil {
+		return Hunk{}, err
+	}
+	oldCount, err := parseCount(matches[2])
+	if err != nil {
+		return Hunk{}, err
+	}
+	newStart, err := strconv.Atoi(matches[3])
+	if err != nil {
+		return Hunk{}, err
+	}
+	newCount, err := parseCount(matches[4])
+	if err != nil {
+		return Hunk{}, err
+	}
+
+	return Hunk{
+		Header:   line,
+		OldStart: oldStart,
+		OldCount: oldCount,
+		NewStart: newStart,
+		NewCount: newCount,
+	}, nil
+}
+
+func parseCount(value string) (int, error) {
+	if value == "" {
+		return 1, nil
+	}
+	return strconv.Atoi(value)
+}
+
+func rowKind(kind LineKind) RowKind {
+	switch kind {
+	case Add:
+		return RowAdd
+	case Delete:
+		return RowDelete
+	case NoNewline:
+		return RowNoNewline
+	default:
+		return RowContext
+	}
+}
+
+func fileName(file File) string {
+	switch {
+	case file.NewName != "" && file.OldName != "" && file.NewName != file.OldName:
+		return file.OldName + " -> " + file.NewName
+	case file.NewName != "":
+		return file.NewName
+	case file.OldName != "":
+		return file.OldName
+	case len(file.Header) > 0:
+		return file.Header[0]
+	default:
+		return "(unknown file)"
+	}
+}

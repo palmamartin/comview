@@ -2,7 +2,7 @@ module github.com/rockorager/comview
 
 go 1.26.1
 
-require git.sr.ht/~rockorager/vaxis v0.15.0
+require git.sr.ht/~rockorager/vaxis v0.15.1-0.20260508174004-aa7e885aac4c
 
 require (
 	github.com/containerd/console v1.0.3 // indirect
