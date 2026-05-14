@@ -756,12 +756,7 @@ func (d *diffViewer) ensureFileRows() {
 
 func (d *diffViewer) printRow(win vaxis.Window, row int, diffRow diff.Row, codeSegments []vaxis.Segment, cursorLine bool) {
 	d.fillRowBackground(win, row, diffRow.Kind, cursorLine)
-	if diffRow.Kind == diff.RowHunk && diffRow.Prefix != "" && diffRow.Code != "" {
-		segments := []vaxis.Segment{
-			{Text: diffRow.Prefix, Style: d.rowStyle(d.styleFor(diff.RowHunk), cursorLine)},
-			{Text: diffRow.Code, Style: d.rowStyle(d.dimStyle(), cursorLine)},
-		}
-		printSegmentsAt(win, 0, row, segments...)
+	if diffRow.Prefix != "" && diffRow.Code != "" && d.printStructuredRow(win, row, diffRow, cursorLine) {
 		return
 	}
 
@@ -787,6 +782,42 @@ func (d *diffViewer) printRow(win vaxis.Window, row int, diffRow diff.Row, codeS
 	printSegmentsAt(win, 0, row, segments...)
 	codeSegments = d.reviewSegments(diffRow, codeSegments)
 	printCodeSegmentsAtOffset(win, 0, row, d.xScroll, d.rowSegments(codeSegments, cursorLine)...)
+}
+
+func (d *diffViewer) printStructuredRow(win vaxis.Window, row int, diffRow diff.Row, cursorLine bool) bool {
+	segments, ok := d.structuredSegments(diffRow)
+	if !ok {
+		return false
+	}
+	printSegmentsAt(win, 0, row, d.rowSegments(segments, cursorLine)...)
+	return true
+}
+
+func (d *diffViewer) structuredSegments(row diff.Row) ([]vaxis.Segment, bool) {
+	switch row.Kind {
+	case diff.RowHunk:
+		return []vaxis.Segment{
+			{Text: row.Prefix, Style: d.styleFor(diff.RowHunk)},
+			{Text: row.Code, Style: d.dimStyle()},
+		}, true
+	case diff.RowCommitHeader:
+		return []vaxis.Segment{
+			{Text: row.Prefix, Style: d.dimStyle()},
+			{Text: row.Code, Style: d.commitHashStyle()},
+		}, true
+	case diff.RowCommitMeta:
+		return []vaxis.Segment{
+			{Text: row.Prefix, Style: d.commitLabelStyle()},
+			{Text: row.Code, Style: d.commitMetaStyle()},
+		}, true
+	case diff.RowCommitTrailer:
+		return []vaxis.Segment{
+			{Text: row.Prefix, Style: d.commitTrailerLabelStyle()},
+			{Text: row.Code, Style: d.commitTrailerValueStyle()},
+		}, true
+	default:
+		return nil, false
+	}
 }
 
 func (d *diffViewer) clearScreenRow(win vaxis.Window, row int, style vaxis.Style) {
@@ -1858,9 +1889,11 @@ func (d *diffViewer) reviewDraftTarget() (review.CommentDraft, bool) {
 		return review.CommentDraft{}, false
 	}
 	return review.CommentDraft{
-		Path: anchor.Path,
-		Line: anchor.Line,
-		Side: anchor.Side,
+		Path:             anchor.Path,
+		Line:             anchor.Line,
+		Side:             anchor.Side,
+		CommitID:         anchor.CommitID,
+		OriginalCommitID: anchor.OriginalCommitID,
 	}, true
 }
 
@@ -1880,9 +1913,11 @@ func (d *diffViewer) reviewDraftForSelection() (review.CommentDraft, bool) {
 	}
 
 	draft := review.CommentDraft{
-		Path: startAnchor.Path,
-		Line: endAnchor.Line,
-		Side: endAnchor.Side,
+		Path:             startAnchor.Path,
+		Line:             endAnchor.Line,
+		Side:             endAnchor.Side,
+		CommitID:         endAnchor.CommitID,
+		OriginalCommitID: endAnchor.OriginalCommitID,
 	}
 	if startAnchor.Path != endAnchor.Path {
 		return review.CommentDraft{}, false
@@ -2391,6 +2426,17 @@ func (d *diffViewer) styleFor(kind diff.RowKind) vaxis.Style {
 			Foreground: d.scheme.Hunk,
 			Background: d.scheme.Background,
 		}
+	case diff.RowCommitHeader:
+		return d.commitHashStyle()
+	case diff.RowCommitMeta:
+		return d.commitMetaStyle()
+	case diff.RowCommitMessage:
+		return vaxis.Style{
+			Foreground: d.scheme.Foreground,
+			Background: d.scheme.Background,
+		}
+	case diff.RowCommitTrailer:
+		return d.commitTrailerValueStyle()
 	case diff.RowAdd:
 		return vaxis.Style{
 			Foreground: d.scheme.Add,
@@ -2408,6 +2454,43 @@ func (d *diffViewer) styleFor(kind diff.RowKind) vaxis.Style {
 		}
 	default:
 		return d.baseStyle()
+	}
+}
+
+func (d *diffViewer) commitHashStyle() vaxis.Style {
+	return vaxis.Style{
+		Foreground: d.scheme.Yellow,
+		Background: d.scheme.Background,
+		Attribute:  vaxis.AttrBold,
+	}
+}
+
+func (d *diffViewer) commitLabelStyle() vaxis.Style {
+	return vaxis.Style{
+		Foreground: d.scheme.Muted,
+		Background: d.scheme.Background,
+	}
+}
+
+func (d *diffViewer) commitMetaStyle() vaxis.Style {
+	return vaxis.Style{
+		Foreground: d.scheme.Base.Cyan,
+		Background: d.scheme.Background,
+	}
+}
+
+func (d *diffViewer) commitTrailerLabelStyle() vaxis.Style {
+	return vaxis.Style{
+		Foreground: d.scheme.Blue,
+		Background: d.scheme.Background,
+		Attribute:  vaxis.AttrBold,
+	}
+}
+
+func (d *diffViewer) commitTrailerValueStyle() vaxis.Style {
+	return vaxis.Style{
+		Foreground: d.scheme.Dim,
+		Background: d.scheme.Background,
 	}
 }
 

@@ -8,9 +8,11 @@ const (
 )
 
 type Anchor struct {
-	Path string `json:"path"`
-	Line int    `json:"line"`
-	Side Side   `json:"side"`
+	Path             string `json:"path"`
+	Line             int    `json:"line"`
+	Side             Side   `json:"side"`
+	CommitID         string `json:"commit_id,omitempty"`
+	OriginalCommitID string `json:"original_commit_id,omitempty"`
 }
 
 type CommentDraft struct {

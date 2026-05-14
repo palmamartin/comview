@@ -58,6 +58,12 @@ diff --git a/a.txt b/a.txt
 	if len(doc.Preamble) != 3 {
 		t.Fatalf("preamble lines = %d, want 3", len(doc.Preamble))
 	}
+	if got, want := doc.Metadata.SourceKind, "show"; got != want {
+		t.Fatalf("source kind = %q, want %q", got, want)
+	}
+	if got, want := doc.Metadata.CommitID, "abc123"; got != want {
+		t.Fatalf("commit id = %q, want %q", got, want)
+	}
 	if len(doc.Rows()) == 0 {
 		t.Fatal("Rows returned no rows")
 	}

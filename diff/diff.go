@@ -13,6 +13,12 @@ import (
 type Document struct {
 	Preamble []string
 	Files    []File
+	Metadata Metadata
+}
+
+type Metadata struct {
+	SourceKind string
+	CommitID   string
 }
 
 type File struct {
@@ -75,6 +81,10 @@ type RowKind int
 
 const (
 	RowPreamble RowKind = iota
+	RowCommitHeader
+	RowCommitMeta
+	RowCommitMessage
+	RowCommitTrailer
 	RowBlank
 	RowFile
 	RowMeta
@@ -99,6 +109,9 @@ func Parse(input string) (Document, error) {
 
 	for scanner.Scan() {
 		line := scanner.Text()
+		if currentFile == nil {
+			parseDocumentMetadata(&doc, line)
+		}
 
 		if strings.HasPrefix(line, "diff --git ") {
 			doc.Files = append(doc.Files, File{
@@ -174,6 +187,19 @@ func Parse(input string) (Document, error) {
 	}
 
 	return doc, nil
+}
+
+func parseDocumentMetadata(doc *Document, line string) {
+	if doc.Metadata.CommitID != "" {
+		return
+	}
+	if strings.HasPrefix(line, "commit ") {
+		fields := strings.Fields(line)
+		if len(fields) >= 2 {
+			doc.Metadata.SourceKind = "show"
+			doc.Metadata.CommitID = fields[1]
+		}
+	}
 }
 
 func parseHunkHeader(line string) (Hunk, error) {

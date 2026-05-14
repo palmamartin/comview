@@ -78,6 +78,77 @@ func TestRowsWithOptionsAddsReviewAnchors(t *testing.T) {
 	}
 }
 
+func TestRowsWithOptionsAddsCommitIDToReviewAnchors(t *testing.T) {
+	doc, err := Parse(`commit abc123
+
+diff --git a/main.go b/main.go
+--- a/main.go
++++ b/main.go
+@@ -1 +1 @@
+-old
++new
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	rows := doc.Rows()
+
+	for _, row := range rows {
+		if row.Kind == RowAdd {
+			if got, want := row.Review.CommitID, "abc123"; got != want {
+				t.Fatalf("commit id = %q, want %q", got, want)
+			}
+			return
+		}
+	}
+	t.Fatal("add row not found")
+}
+
+func TestRowsWithOptionsHighlightsGitShowPreamble(t *testing.T) {
+	doc, err := Parse(`commit abc123
+Author: Example <example@example.com>
+Date:   Thu May 14 12:00:00 2026 -0500
+
+    Add commit highlighting
+
+    Reviewed-by: Someone <someone@example.com>
+
+diff --git a/main.go b/main.go
+--- a/main.go
++++ b/main.go
+@@ -1 +1 @@
+-old
++new
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	rows := doc.Rows()
+
+	tests := []struct {
+		index  int
+		kind   RowKind
+		prefix string
+		code   string
+	}{
+		{0, RowCommitHeader, "commit ", "abc123"},
+		{1, RowCommitMeta, "Author: ", "Example <example@example.com>"},
+		{2, RowCommitMeta, "Date:   ", "Thu May 14 12:00:00 2026 -0500"},
+		{3, RowBlank, "", ""},
+		{4, RowCommitMessage, "", ""},
+		{5, RowBlank, "", ""},
+		{6, RowCommitTrailer, "    Reviewed-by: ", "Someone <someone@example.com>"},
+	}
+	for _, tt := range tests {
+		row := rows[tt.index]
+		if row.Kind != tt.kind || row.Prefix != tt.prefix || row.Code != tt.code {
+			t.Fatalf("row %d = kind:%v prefix:%q code:%q text:%q", tt.index, row.Kind, row.Prefix, row.Code, row.Text)
+		}
+	}
+}
+
 func TestRowsUseCleanFileHeaderByDefault(t *testing.T) {
 	doc, err := Parse(`diff --git a/tui/app.go b/tui/app.go
 index b458ab8f49ee..9b18adf56d83 100644

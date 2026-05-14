@@ -339,6 +339,27 @@ func TestDiffViewerUsesSingleDarkGutterSegment(t *testing.T) {
 	}
 }
 
+func TestDiffViewerStylesCommitPreambleRows(t *testing.T) {
+	viewer := &diffViewer{}
+	viewer.ensureColorScheme()
+
+	header, ok := viewer.structuredSegments(diff.Row{Kind: diff.RowCommitHeader, Prefix: "commit ", Code: "abc123"})
+	if !ok {
+		t.Fatal("commit header segments missing")
+	}
+	if header[0].Style.Foreground != viewer.scheme.Dim || header[1].Style.Foreground != viewer.scheme.Yellow {
+		t.Fatalf("header segments = %+v", header)
+	}
+
+	trailer, ok := viewer.structuredSegments(diff.Row{Kind: diff.RowCommitTrailer, Prefix: "    Reviewed-by: ", Code: "Tim"})
+	if !ok {
+		t.Fatal("trailer segments missing")
+	}
+	if trailer[0].Style.Foreground != viewer.scheme.Blue || trailer[1].Style.Foreground != viewer.scheme.Dim {
+		t.Fatalf("trailer segments = %+v", trailer)
+	}
+}
+
 func TestDiffViewerUsesReviewMarkerInGutterSpace(t *testing.T) {
 	anchor := review.Anchor{Path: "main.go", Line: 2, Side: review.SideRight}
 	viewer := &diffViewer{
@@ -592,7 +613,7 @@ func TestDiffViewerInsertCreatesReviewDraftAtCursor(t *testing.T) {
 			Kind:   diff.RowAdd,
 			Text:   "hello",
 			Code:   "hello",
-			Review: review.Anchor{Path: "main.go", Line: 12, Side: review.SideRight},
+			Review: review.Anchor{Path: "main.go", Line: 12, Side: review.SideRight, CommitID: "abc123"},
 		}},
 	}
 	viewer.Layout(Tight(Size{Width: 80, Height: 10}))
@@ -611,7 +632,7 @@ func TestDiffViewerInsertCreatesReviewDraftAtCursor(t *testing.T) {
 	if len(viewer.reviewDrafts) != 1 {
 		t.Fatalf("draft count = %d, want 1", len(viewer.reviewDrafts))
 	}
-	want := review.CommentDraft{Path: "main.go", Line: 12, Side: review.SideRight, Body: "looks good"}
+	want := review.CommentDraft{Path: "main.go", Line: 12, Side: review.SideRight, CommitID: "abc123", Body: "looks good"}
 	if got := viewer.reviewDrafts[0]; got != want {
 		t.Fatalf("draft = %+v, want %+v", got, want)
 	}
