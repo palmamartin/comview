@@ -72,6 +72,7 @@ type RowKind int
 
 const (
 	RowPreamble RowKind = iota
+	RowBlank
 	RowFile
 	RowMeta
 	RowHunk
@@ -225,18 +226,27 @@ func rowKind(kind LineKind) RowKind {
 }
 
 func fileName(file File) string {
+	oldName := displayFileName(file.OldName)
+	newName := displayFileName(file.NewName)
 	switch {
-	case file.NewName != "" && file.OldName != "" && file.NewName != file.OldName:
-		return file.OldName + " -> " + file.NewName
-	case file.NewName != "":
-		return file.NewName
-	case file.OldName != "":
-		return file.OldName
+	case oldName != "" && newName != "" && oldName != newName && oldName != "/dev/null" && newName != "/dev/null":
+		return oldName + " -> " + newName
+	case newName != "" && newName != "/dev/null":
+		return newName
+	case oldName != "" && oldName != "/dev/null":
+		return oldName
 	case len(file.Header) > 0:
 		return file.Header[0]
 	default:
 		return "(unknown file)"
 	}
+}
+
+func displayFileName(name string) string {
+	if name == "" || name == "/dev/null" {
+		return name
+	}
+	return stripDiffPathPrefix(name)
 }
 
 func syntaxFileName(file File) string {

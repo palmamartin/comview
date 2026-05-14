@@ -192,6 +192,53 @@ func TestRowsWithOptionsPairsOneAddedLineInLargerDeleteBlock(t *testing.T) {
 	}
 }
 
+func TestRowsWithOptionsPrefersMatchingLeadingToken(t *testing.T) {
+	doc, err := Parse(`diff --git a/inline.go b/inline.go
+--- a/inline.go
++++ b/inline.go
+@@ -42,1 +42,4 @@
+-const minInlineLineSimilarity = 0.45
++const (
++        minInlineLineSimilarity     = 0.45
++        leadingTokenMismatchPenalty = 0.75
++)
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var deleteRow Row
+	var addRows []Row
+	for _, row := range doc.Rows() {
+		switch row.Kind {
+		case RowDelete:
+			deleteRow = row
+		case RowAdd:
+			addRows = append(addRows, row)
+		}
+	}
+
+	if deleteRow.Code == "" || len(addRows) != 4 {
+		t.Fatalf("delete row = %+v, add rows = %+v", deleteRow, addRows)
+	}
+	if len(deleteRow.InlineSpans) == 0 {
+		t.Fatalf("delete row %q has no inline spans", deleteRow.Text)
+	}
+	for _, span := range deleteRow.InlineSpans {
+		if span.Start < len("const") {
+			t.Fatalf("delete span %+v highlights leading const in %q", span, deleteRow.Code)
+		}
+	}
+	if len(addRows[0].InlineSpans) == 0 {
+		t.Fatalf("leading const row %q has no inline spans", addRows[0].Text)
+	}
+	for _, row := range addRows[1:] {
+		if len(row.InlineSpans) != 0 {
+			t.Fatalf("unpaired row %q has inline spans %+v", row.Text, row.InlineSpans)
+		}
+	}
+}
+
 func TestInlineSpansCoalesceAcrossWhitespace(t *testing.T) {
 	oldSpans, newSpans := inlineSpans("old value", "new thing")
 

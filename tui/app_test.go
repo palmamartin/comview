@@ -249,6 +249,41 @@ func TestDiffViewerUsesSingleDarkGutterSegment(t *testing.T) {
 	}
 }
 
+func TestDiffViewerStickyFileHeader(t *testing.T) {
+	viewer := &diffViewer{
+		rows: []diff.Row{
+			{Kind: diff.RowFile, Text: "one.go"},
+			{Kind: diff.RowHunk, Text: "@@ -1 +1 @@"},
+			{Kind: diff.RowDelete, Text: "-old"},
+			{Kind: diff.RowBlank},
+			{Kind: diff.RowFile, Text: "two.go"},
+			{Kind: diff.RowHunk, Text: "@@ -1 +1 @@"},
+		},
+	}
+
+	viewer.scroll = 0
+	if row, ok := viewer.stickyFileHeader(); ok {
+		t.Fatalf("sticky row at file header = %+v, want none", row)
+	}
+
+	viewer.scroll = 2
+	row, ok := viewer.stickyFileHeader()
+	if !ok || row.Text != "one.go" {
+		t.Fatalf("sticky row = %+v, %v; want one.go", row, ok)
+	}
+
+	viewer.scroll = 4
+	if row, ok := viewer.stickyFileHeader(); ok {
+		t.Fatalf("sticky row at second file header = %+v, want none", row)
+	}
+
+	viewer.scroll = 5
+	row, ok = viewer.stickyFileHeader()
+	if !ok || row.Text != "two.go" {
+		t.Fatalf("sticky row = %+v, %v; want two.go", row, ok)
+	}
+}
+
 func TestDiffViewerVimNavigationKeys(t *testing.T) {
 	tests := []struct {
 		name     string

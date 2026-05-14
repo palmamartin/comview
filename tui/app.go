@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"sort"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -63,6 +64,7 @@ type diffViewer struct {
 	width        int
 	contentWide  int
 	codeSegments [][]vaxis.Segment
+	fileRows     []int
 	selection    textSelection
 	yankUntil    time.Time
 	clicks       clickState
@@ -277,8 +279,48 @@ func (d *diffViewer) Paint(win vaxis.Window) {
 		d.printRow(win, row+1, diffRow, d.codeSegments[docRow])
 		d.paintSelection(win, row+1, docRow)
 	}
+	d.paintStickyFileHeader(win)
 	d.paintScrollbar(win)
 	d.paintHorizontalScrollbar(win)
+}
+
+func (d *diffViewer) paintStickyFileHeader(win vaxis.Window) {
+	row, ok := d.stickyFileHeader()
+	if !ok {
+		return
+	}
+
+	d.clearScreenRow(win, 1, d.baseStyle())
+	d.printRow(win, 1, row, nil)
+}
+
+func (d *diffViewer) stickyFileHeader() (diff.Row, bool) {
+	d.ensureFileRows()
+	index := sort.Search(len(d.fileRows), func(index int) bool {
+		return d.fileRows[index] > d.scroll
+	}) - 1
+	if index < 0 {
+		return diff.Row{}, false
+	}
+
+	fileRow := d.fileRows[index]
+	if fileRow == d.scroll {
+		return diff.Row{}, false
+	}
+	return d.rows[fileRow], true
+}
+
+func (d *diffViewer) ensureFileRows() {
+	if d.fileRows != nil {
+		return
+	}
+
+	d.fileRows = make([]int, 0)
+	for index, row := range d.rows {
+		if row.Kind == diff.RowFile {
+			d.fileRows = append(d.fileRows, index)
+		}
+	}
 }
 
 func (d *diffViewer) printRow(win vaxis.Window, row int, diffRow diff.Row, codeSegments []vaxis.Segment) {
@@ -312,6 +354,23 @@ func (d *diffViewer) printRow(win vaxis.Window, row int, diffRow diff.Row, codeS
 	d.fillCodeBackground(win, row, 0, diffRow.Kind)
 	printSegmentsAt(win, 0, row, segments...)
 	printCodeSegmentsAtOffset(win, 0, row, d.xScroll, codeSegments...)
+}
+
+func (d *diffViewer) clearScreenRow(win vaxis.Window, row int, style vaxis.Style) {
+	width, height := win.Size()
+	if row < 0 || row >= height {
+		return
+	}
+
+	for col := 0; col < width; col++ {
+		win.SetCell(col, row, vaxis.Cell{
+			Character: vaxis.Character{
+				Grapheme: " ",
+				Width:    1,
+			},
+			Style: style,
+		})
+	}
 }
 
 func (d *diffViewer) ensureRenderCache() {

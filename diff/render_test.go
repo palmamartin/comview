@@ -32,6 +32,115 @@ index 1111111..2222222 100644
 	}
 }
 
+func TestRowsUseCleanFileHeaderByDefault(t *testing.T) {
+	doc, err := Parse(`diff --git a/tui/app.go b/tui/app.go
+index b458ab8f49ee..9b18adf56d83 100644
+--- a/tui/app.go
++++ b/tui/app.go
+@@ -1 +1 @@
+-old
++new
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	rows := doc.Rows()
+	if len(rows) == 0 || rows[0].Kind != RowFile {
+		t.Fatalf("first row = %+v, want file row", rows)
+	}
+	if rows[0].Text != "tui/app.go" {
+		t.Fatalf("file row = %q, want tui/app.go", rows[0].Text)
+	}
+	for _, row := range rows {
+		if row.Kind == RowMeta {
+			t.Fatalf("unexpected metadata row %q", row.Text)
+		}
+	}
+}
+
+func TestRowsWithOptionsCanShowFileMetadata(t *testing.T) {
+	doc, err := Parse(`diff --git a/main.go b/main.go
+index 1111111..2222222 100644
+--- a/main.go
++++ b/main.go
+@@ -1 +1 @@
+-old
++new
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	rows := doc.RowsWithOptions(RenderOptions{
+		ShowFileHeaders:  true,
+		ShowFileMetadata: true,
+		ShowHunkHeaders:  true,
+	})
+
+	var metadata []string
+	for _, row := range rows {
+		if row.Kind == RowMeta {
+			metadata = append(metadata, row.Text)
+		}
+	}
+	if len(metadata) != 3 {
+		t.Fatalf("metadata rows = %q, want index/---/+++", metadata)
+	}
+	if metadata[0] != "index 1111111..2222222 100644" {
+		t.Fatalf("first metadata row = %q", metadata[0])
+	}
+}
+
+func TestRowsUseCleanRenameFileHeader(t *testing.T) {
+	doc, err := Parse(`diff --git a/old.go b/new.go
+--- a/old.go
++++ b/new.go
+@@ -1 +1 @@
+-old
++new
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	rows := doc.Rows()
+	if len(rows) == 0 || rows[0].Text != "old.go -> new.go" {
+		t.Fatalf("file row = %+v, want old.go -> new.go", rows)
+	}
+}
+
+func TestRowsSeparateFileHeaders(t *testing.T) {
+	doc, err := Parse(`diff --git a/one.go b/one.go
+--- a/one.go
++++ b/one.go
+@@ -1 +1 @@
+-old
++new
+diff --git a/two.go b/two.go
+--- a/two.go
++++ b/two.go
+@@ -1 +1 @@
+-old
++new
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	rows := doc.Rows()
+	for i, row := range rows {
+		if row.Kind != RowFile || row.Text != "two.go" {
+			continue
+		}
+		if i == 0 || rows[i-1].Kind != RowBlank || rows[i-1].Text != "" {
+			t.Fatalf("row before second file = %+v, want blank row", rows[i-1])
+		}
+		return
+	}
+	t.Fatal("missing second file row")
+}
+
 func TestRowsWithOptionsCanShowLineNumbers(t *testing.T) {
 	doc, err := Parse(`diff --git a/main.go b/main.go
 --- a/main.go
@@ -135,6 +244,9 @@ func TestDefaultRenderOptionsShowLineNumbers(t *testing.T) {
 	options := DefaultRenderOptions()
 	if !options.ShowLineNumbers {
 		t.Fatal("DefaultRenderOptions().ShowLineNumbers = false, want true")
+	}
+	if options.ShowFileMetadata {
+		t.Fatal("DefaultRenderOptions().ShowFileMetadata = true, want false")
 	}
 }
 

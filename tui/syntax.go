@@ -79,7 +79,7 @@ func (h *SyntaxHighlighter) HighlightRows(rows []diff.Row, baseFor func(diff.Row
 
 	for index, row := range rows {
 		switch row.Kind {
-		case diff.RowHunk, diff.RowFile, diff.RowMeta, diff.RowPreamble:
+		case diff.RowHunk, diff.RowFile, diff.RowMeta, diff.RowPreamble, diff.RowBlank:
 			flush()
 		}
 

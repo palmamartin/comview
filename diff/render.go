@@ -20,7 +20,6 @@ func DefaultRenderOptions() RenderOptions {
 	return RenderOptions{
 		ShowPreamble:         true,
 		ShowFileHeaders:      true,
-		ShowFileMetadata:     true,
 		ShowHunkHeaders:      true,
 		ShowContext:          true,
 		ShowNoNewlineMarkers: true,
@@ -44,10 +43,13 @@ func (d Document) RowsWithOptions(options RenderOptions) []Row {
 		}
 	}
 
-	for _, file := range d.Files {
+	for fileIndex, file := range d.Files {
 		name := fileName(file)
 		syntaxName := syntaxFileName(file)
 		if options.ShowFileHeaders {
+			if fileIndex > 0 {
+				rows = append(rows, Row{Kind: RowBlank})
+			}
 			rows = append(rows, Row{Kind: RowFile, Text: name, FileName: syntaxName})
 		}
 
