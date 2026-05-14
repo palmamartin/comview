@@ -71,12 +71,17 @@ const (
 	CommandNone Command = iota
 	CommandRedraw
 	CommandQuit
+	CommandCopy
 )
 
 type Widget interface {
 	HandleEvent(vaxis.Event) (Command, error)
 	Layout(Constraints) Size
 	Paint(vaxis.Window)
+}
+
+type ClipboardProvider interface {
+	ClipboardText() string
 }
 
 type App struct {
@@ -161,6 +166,13 @@ func (a *App) handleEvent(ev vaxis.Event) (Command, error) {
 		return CommandNone, err
 	}
 
+	if cmd == CommandCopy {
+		if provider, ok := a.root.(ClipboardProvider); ok {
+			if text := provider.ClipboardText(); text != "" {
+				a.vx.ClipboardPush(text)
+			}
+		}
+	}
 	if cmd == CommandRedraw {
 		requestFrame = true
 	}

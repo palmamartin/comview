@@ -63,6 +63,7 @@ func TestDefaultColorSchemeUsesOnlyRGBColors(t *testing.T) {
 		scheme.Delete,
 		scheme.DeleteLine,
 		scheme.DeleteInline,
+		scheme.Selection,
 	}
 
 	for _, color := range colors {
@@ -461,6 +462,188 @@ func TestDiffViewerMouseWheelScrolls(t *testing.T) {
 				t.Fatalf("pending keys = %q, want empty", viewer.keys.Pending())
 			}
 		})
+	}
+}
+
+func TestDiffViewerMouseWheelExtendsDraggingSelection(t *testing.T) {
+	viewer := newTestDiffViewer(100, 10)
+	for i := range viewer.rows {
+		viewer.rows[i].Text = "abcdef"
+	}
+	viewer.scroll = 10
+	viewer.selection = textSelection{
+		Active:   true,
+		Dragging: true,
+		Anchor: selectionPoint{
+			Row: 10,
+			Col: 0,
+		},
+		Cursor: selectionPoint{
+			Row: 10,
+			Col: 0,
+		},
+	}
+
+	cmd, err := viewer.HandleEvent(vaxis.Mouse{
+		Button: vaxis.MouseWheelDown,
+		Row:    5,
+		Col:    2,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cmd != CommandRedraw {
+		t.Fatalf("command = %v, want %v", cmd, CommandRedraw)
+	}
+	if viewer.scroll != 11 {
+		t.Fatalf("scroll = %d, want 11", viewer.scroll)
+	}
+	if got := viewer.selection.Cursor; got != (selectionPoint{Row: 15, Col: 2}) {
+		t.Fatalf("cursor = %+v, want row 15 col 2", got)
+	}
+}
+
+func TestDiffViewerMouseWheelDoesNotExtendFinishedSelection(t *testing.T) {
+	viewer := newTestDiffViewer(100, 10)
+	for i := range viewer.rows {
+		viewer.rows[i].Text = "abcdef"
+	}
+	viewer.scroll = 10
+	viewer.selection = textSelection{
+		Active: true,
+		Anchor: selectionPoint{
+			Row: 10,
+			Col: 0,
+		},
+		Cursor: selectionPoint{
+			Row: 10,
+			Col: 0,
+		},
+	}
+
+	_, err := viewer.HandleEvent(vaxis.Mouse{
+		Button: vaxis.MouseWheelDown,
+		Row:    5,
+		Col:    2,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := viewer.selection.Cursor; got != (selectionPoint{Row: 10, Col: 0}) {
+		t.Fatalf("cursor = %+v, want unchanged", got)
+	}
+}
+
+func TestDiffViewerMouseSelectionCopiesText(t *testing.T) {
+	viewer := &diffViewer{
+		rows: []diff.Row{
+			{Kind: diff.RowContext, Text: "abcde"},
+			{Kind: diff.RowContext, Text: "fghij"},
+		},
+	}
+	viewer.Layout(Tight(Size{Width: 80, Height: 10}))
+
+	cmd, err := viewer.HandleEvent(vaxis.Mouse{
+		Button:    vaxis.MouseLeftButton,
+		EventType: vaxis.EventPress,
+		Row:       1,
+		Col:       1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cmd != CommandRedraw {
+		t.Fatalf("press command = %v, want %v", cmd, CommandRedraw)
+	}
+
+	cmd, err = viewer.HandleEvent(vaxis.Mouse{
+		Button:    vaxis.MouseLeftButton,
+		EventType: vaxis.EventRelease,
+		Row:       2,
+		Col:       2,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cmd != CommandRedraw {
+		t.Fatalf("release command = %v, want %v", cmd, CommandRedraw)
+	}
+
+	if got, want := viewer.ClipboardText(), "bcde\nfgh"; got != want {
+		t.Fatalf("clipboard text = %q, want %q", got, want)
+	}
+}
+
+func TestDiffViewerCopyKeyCopiesSelection(t *testing.T) {
+	tests := []struct {
+		name string
+		key  vaxis.Key
+	}{
+		{
+			name: "y",
+			key:  vaxis.Key{Text: "y", Keycode: 'y'},
+		},
+		{
+			name: "copy key",
+			key:  vaxis.Key{Keycode: vaxis.KeyCopy},
+		},
+		{
+			name: "super c",
+			key:  vaxis.Key{Text: "c", Keycode: 'c', Modifiers: vaxis.ModSuper},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			viewer := &diffViewer{
+				rows: []diff.Row{{Kind: diff.RowContext, Text: "abcde"}},
+				selection: textSelection{
+					Active: true,
+					Anchor: selectionPoint{
+						Row: 0,
+						Col: 1,
+					},
+					Cursor: selectionPoint{
+						Row: 0,
+						Col: 3,
+					},
+				},
+			}
+
+			cmd, err := viewer.HandleEvent(tt.key)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if cmd != CommandCopy {
+				t.Fatalf("command = %v, want %v", cmd, CommandCopy)
+			}
+		})
+	}
+}
+
+func TestDiffViewerSelectionPointAccountsForHorizontalScroll(t *testing.T) {
+	row := diff.Row{
+		Kind:   diff.RowAdd,
+		Gutter: "1 1 │ ",
+		Marker: "+",
+		Code:   "abcdef",
+	}
+	row.Text = row.Gutter + row.Marker + row.Code
+	viewer := &diffViewer{
+		rows:    []diff.Row{row},
+		xScroll: 2,
+	}
+	codeOffset := textCellWidth(row.Gutter + row.Marker)
+
+	point, ok := viewer.selectionPoint(vaxis.Mouse{
+		Row: 1,
+		Col: codeOffset,
+	})
+	if !ok {
+		t.Fatal("selection point not found")
+	}
+	if want := codeOffset + viewer.xScroll; point.Col != want {
+		t.Fatalf("selection col = %d, want %d", point.Col, want)
 	}
 }
 
