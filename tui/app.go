@@ -14,7 +14,7 @@ func Run(input string) error {
 	}
 
 	app, err := NewApp(&diffViewer{
-		rows: doc.Rows(),
+		rows: doc.RowsWithOptions(diff.DefaultRenderOptions()),
 	}, vaxis.Options{})
 	if err != nil {
 		return err
@@ -27,6 +27,12 @@ type diffViewer struct {
 	rows   []diff.Row
 	scroll int
 	height int
+	scheme ColorScheme
+}
+
+func (d *diffViewer) SetTerminalColors(colors TerminalColors) {
+	d.ensureColorScheme()
+	d.scheme.ApplyTerminalColors(colors)
 }
 
 func (d *diffViewer) HandleEvent(ev vaxis.Event) (Command, error) {
@@ -67,19 +73,32 @@ func (d *diffViewer) Paint(win vaxis.Window) {
 	if width == 0 || height == 0 {
 		return
 	}
+	d.ensureColorScheme()
 
 	headerStyle := vaxis.Style{
-		Foreground: vaxis.IndexColor(14),
+		Foreground: d.scheme.Header,
+		Background: d.scheme.Background,
 		Attribute:  vaxis.AttrBold,
 	}
 	mutedStyle := vaxis.Style{
-		Foreground: vaxis.IndexColor(8),
+		Foreground: d.scheme.Muted,
+		Background: d.scheme.Background,
 	}
 
+	win.Fill(vaxis.Cell{
+		Character: vaxis.Character{
+			Grapheme: " ",
+			Width:    1,
+		},
+		Style: vaxis.Style{
+			Foreground: d.scheme.Foreground,
+			Background: d.scheme.Background,
+		},
+	})
 	printAt(win, 0, 0, "comview", headerStyle)
 
 	if len(d.rows) == 0 {
-		printAt(win, 0, 2, "Pipe git diff or git show into comview.", vaxis.Style{})
+		printAt(win, 0, 2, "Pipe git diff or git show into comview.", d.baseStyle())
 		printAt(win, 0, 4, "Press q, Esc, Ctrl+C, or Ctrl+D to quit.", mutedStyle)
 		return
 	}
@@ -87,7 +106,7 @@ func (d *diffViewer) Paint(win vaxis.Window) {
 	printAt(win, 10, 0, "j/k or arrows scroll, q quits", mutedStyle)
 
 	for row, diffRow := range d.visibleRows() {
-		printAt(win, 0, row+1, diffRow.Text, styleFor(diffRow.Kind))
+		printAt(win, 0, row+1, diffRow.Text, d.styleFor(diffRow.Kind))
 	}
 }
 
@@ -117,31 +136,49 @@ func (d *diffViewer) clampScroll() {
 	}
 }
 
-func styleFor(kind diff.RowKind) vaxis.Style {
+func (d *diffViewer) styleFor(kind diff.RowKind) vaxis.Style {
 	switch kind {
 	case diff.RowFile:
 		return vaxis.Style{
-			Foreground: vaxis.IndexColor(14),
+			Foreground: d.scheme.Header,
+			Background: d.scheme.Background,
 			Attribute:  vaxis.AttrBold,
 		}
 	case diff.RowHunk:
 		return vaxis.Style{
-			Foreground: vaxis.IndexColor(5),
+			Foreground: d.scheme.Hunk,
+			Background: d.scheme.Background,
 		}
 	case diff.RowAdd:
 		return vaxis.Style{
-			Foreground: vaxis.IndexColor(2),
+			Foreground: d.scheme.Add,
+			Background: d.scheme.Background,
 		}
 	case diff.RowDelete:
 		return vaxis.Style{
-			Foreground: vaxis.IndexColor(1),
+			Foreground: d.scheme.Delete,
+			Background: d.scheme.Background,
 		}
 	case diff.RowMeta, diff.RowPreamble, diff.RowNoNewline:
 		return vaxis.Style{
-			Foreground: vaxis.IndexColor(8),
+			Foreground: d.scheme.Muted,
+			Background: d.scheme.Background,
 		}
 	default:
-		return vaxis.Style{}
+		return d.baseStyle()
+	}
+}
+
+func (d *diffViewer) ensureColorScheme() {
+	if d.scheme.Foreground == vaxis.ColorDefault {
+		d.scheme = DefaultColorScheme()
+	}
+}
+
+func (d *diffViewer) baseStyle() vaxis.Style {
+	return vaxis.Style{
+		Foreground: d.scheme.Foreground,
+		Background: d.scheme.Background,
 	}
 }
 

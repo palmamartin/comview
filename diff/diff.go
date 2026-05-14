@@ -154,32 +154,6 @@ func Parse(input string) (Document, error) {
 	return doc, nil
 }
 
-func (d Document) Rows() []Row {
-	rows := make([]Row, 0)
-	for _, line := range d.Preamble {
-		rows = append(rows, Row{Kind: RowPreamble, Text: line})
-	}
-	for _, file := range d.Files {
-		rows = append(rows, Row{Kind: RowFile, Text: fileName(file)})
-		for _, line := range file.Header {
-			if strings.HasPrefix(line, "diff --git ") {
-				continue
-			}
-			rows = append(rows, Row{Kind: RowMeta, Text: line})
-		}
-		for _, hunk := range file.Hunks {
-			rows = append(rows, Row{Kind: RowHunk, Text: hunk.Header})
-			for _, line := range hunk.Lines {
-				rows = append(rows, Row{
-					Kind: rowKind(line.Kind),
-					Text: line.Text,
-				})
-			}
-		}
-	}
-	return rows
-}
-
 func parseHunkHeader(line string) (Hunk, error) {
 	matches := hunkHeader.FindStringSubmatch(line)
 	if matches == nil {

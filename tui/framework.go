@@ -110,6 +110,7 @@ func (a *App) Run() error {
 	defer a.vx.Close()
 
 	a.vx.SetTitle("comview")
+	a.applyTerminalColors()
 	a.frames.Request(a.draw)
 
 	ticker := time.NewTicker(a.frames.Interval())
@@ -150,6 +151,9 @@ func (a *App) handleEvent(ev vaxis.Event) (Command, error) {
 	switch ev.(type) {
 	case vaxis.Resize, vaxis.Redraw:
 		requestFrame = true
+	case vaxis.ColorThemeUpdate:
+		a.applyTerminalColors()
+		requestFrame = true
 	}
 
 	cmd, err := a.root.HandleEvent(ev)
@@ -164,6 +168,12 @@ func (a *App) handleEvent(ev vaxis.Event) (Command, error) {
 		a.frames.Request(a.draw)
 	}
 	return cmd, nil
+}
+
+func (a *App) applyTerminalColors() {
+	if receiver, ok := a.root.(TerminalColorReceiver); ok {
+		receiver.SetTerminalColors(QueryTerminalColors(a.vx))
+	}
 }
 
 type FramePipeline struct {
