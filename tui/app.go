@@ -11,6 +11,8 @@ import (
 const pendingKeyTimeout = 800 * time.Millisecond
 const mouseWheelScrollLines = 1
 const scrollbarWidth = 1
+const verticalScrollbarThumb = "█"
+const horizontalScrollbarThumb = "\U0001FB0B"
 
 // Run starts the comview TUI.
 func Run(input string) error {
@@ -31,12 +33,16 @@ func Run(input string) error {
 }
 
 type diffViewer struct {
-	rows        []diff.Row
-	scroll      int
-	height      int
-	keys        keyChordState
-	scheme      ColorScheme
-	highlighter *SyntaxHighlighter
+	rows         []diff.Row
+	scroll       int
+	xScroll      int
+	height       int
+	width        int
+	contentWide  int
+	codeSegments [][]vaxis.Segment
+	keys         keyChordState
+	scheme       ColorScheme
+	highlighter  *SyntaxHighlighter
 }
 
 func (d *diffViewer) SetTerminalColors(colors TerminalColors) {
@@ -45,6 +51,7 @@ func (d *diffViewer) SetTerminalColors(colors TerminalColors) {
 	if d.highlighter != nil {
 		d.highlighter.SetColorScheme(d.scheme)
 	}
+	d.invalidateRenderCache()
 }
 
 func (d *diffViewer) HandleEvent(ev vaxis.Event) (Command, error) {
@@ -98,6 +105,14 @@ func (d *diffViewer) handleKey(key vaxis.Key) (Command, error) {
 		d.keys.Clear()
 		d.scrollBy(-1)
 		return CommandRedraw, nil
+	case key.Matches('l'), key.Matches(vaxis.KeyRight):
+		d.keys.Clear()
+		d.scrollHorizontalBy(1)
+		return CommandRedraw, nil
+	case key.Matches('h'), key.Matches(vaxis.KeyLeft):
+		d.keys.Clear()
+		d.scrollHorizontalBy(-1)
+		return CommandRedraw, nil
 	default:
 		d.keys.Clear()
 		return CommandNone, nil
@@ -122,7 +137,9 @@ func (d *diffViewer) handleMouse(mouse vaxis.Mouse) (Command, error) {
 func (d *diffViewer) Layout(constraints Constraints) Size {
 	size := constraints.Constrain(constraints.Max)
 	d.height = size.Height
+	d.width = size.Width
 	d.clampScroll()
+	d.clampHorizontalScroll()
 	return size
 }
 
@@ -132,6 +149,7 @@ func (d *diffViewer) Paint(win vaxis.Window) {
 		return
 	}
 	d.ensureColorScheme()
+	d.ensureRenderCache()
 
 	headerStyle := vaxis.Style{
 		Foreground: d.scheme.Header,
@@ -161,13 +179,13 @@ func (d *diffViewer) Paint(win vaxis.Window) {
 		return
 	}
 
-	printAt(win, 10, 0, "j/k, gg/G, Ctrl+d/u scroll, q quits", mutedStyle)
+	printAt(win, 10, 0, "j/k/h/l, gg/G, Ctrl+d/u scroll, q quits", mutedStyle)
 
-	highlightedRows := d.highlighter.HighlightRows(d.rows, d.codeStyle)
 	for row, diffRow := range d.visibleRows() {
-		d.printRow(win, row+1, diffRow, highlightedRows[d.scroll+row])
+		d.printRow(win, row+1, diffRow, d.codeSegments[d.scroll+row])
 	}
 	d.paintScrollbar(win)
+	d.paintHorizontalScrollbar(win)
 }
 
 func (d *diffViewer) printRow(win vaxis.Window, row int, diffRow diff.Row, codeSegments []vaxis.Segment) {
@@ -187,16 +205,17 @@ func (d *diffViewer) printRow(win vaxis.Window, row int, diffRow diff.Row, codeS
 			{Text: diffRow.Marker, Style: d.styleFor(diffRow.Kind)},
 		}
 		if diffRow.Code != "" {
-			codeSegments = d.fallbackCodeSegments(diffRow, codeSegments)
-			codeSegments = applyInlineSpans(codeSegments, diffRow.InlineSpans, d.inlineBackground(diffRow.Kind))
-			segments = append(segments, codeSegments...)
+			codeOffset := segmentTextWidth(segments)
+			printSegmentsAt(win, 0, row, segments...)
+			printCodeSegmentsAtOffset(win, codeOffset, row, d.xScroll, codeSegments...)
+			return
 		}
 		printSegmentsAt(win, 0, row, segments...)
 		return
 	}
 
 	if diffRow.Code == "" {
-		printAt(win, 0, row, diffRow.Text, d.styleFor(diffRow.Kind))
+		printSegmentsAt(win, 0, row, vaxis.Segment{Text: diffRow.Text, Style: d.styleFor(diffRow.Kind)})
 		return
 	}
 
@@ -205,17 +224,32 @@ func (d *diffViewer) printRow(win vaxis.Window, row int, diffRow diff.Row, codeS
 		{Text: diffRow.Gutter, Style: d.styleFor(diff.RowMeta)},
 		{Text: diffRow.Marker, Style: style},
 	}
-	codeSegments = d.fallbackCodeSegments(diffRow, codeSegments)
-	codeSegments = applyInlineSpans(codeSegments, diffRow.InlineSpans, d.inlineBackground(diffRow.Kind))
-	segments = append(segments, codeSegments...)
 	printSegmentsAt(win, 0, row, segments...)
+	printCodeSegmentsAtOffset(win, 0, row, d.xScroll, codeSegments...)
 }
 
-func (d *diffViewer) fallbackCodeSegments(diffRow diff.Row, segments []vaxis.Segment) []vaxis.Segment {
-	if len(segments) > 0 {
-		return segments
+func (d *diffViewer) ensureRenderCache() {
+	if len(d.codeSegments) == len(d.rows) {
+		return
 	}
-	return d.highlighter.Highlight(diffRow.FileName, diffRow.Code, d.codeStyle(diffRow.Kind))
+
+	highlightedRows := d.highlighter.HighlightRows(d.rows, d.codeStyle)
+	d.codeSegments = make([][]vaxis.Segment, len(d.rows))
+	for index, row := range d.rows {
+		if row.Code == "" || row.Kind == diff.RowHunk {
+			continue
+		}
+
+		segments := highlightedRows[index]
+		if len(segments) == 0 {
+			segments = d.highlighter.Highlight(row.FileName, row.Code, d.codeStyle(row.Kind))
+		}
+		d.codeSegments[index] = applyInlineSpans(segments, row.InlineSpans, d.inlineBackground(row.Kind))
+	}
+}
+
+func (d *diffViewer) invalidateRenderCache() {
+	d.codeSegments = nil
 }
 
 func (d *diffViewer) fillRowBackground(win vaxis.Window, row int, kind diff.RowKind) {
@@ -245,7 +279,7 @@ func (d *diffViewer) visibleRows() []diff.Row {
 		return nil
 	}
 
-	available := d.height - 1
+	available := d.visibleRowCapacity()
 	end := d.scroll + available
 	if end > len(d.rows) {
 		end = len(d.rows)
@@ -256,15 +290,19 @@ func (d *diffViewer) visibleRows() []diff.Row {
 type scrollbar struct {
 	Visible bool
 	Col     int
-	Top     int
-	Height  int
+	Row     int
+	Length  int
 	Thumb   int
 	Size    int
 }
 
 func (d *diffViewer) scrollbar(width int, height int) scrollbar {
 	trackTop := 1
-	trackHeight := height - trackTop
+	verticalVisible, _ := d.scrollbarVisibility(width, height)
+	if !verticalVisible {
+		return scrollbar{}
+	}
+	trackHeight := d.verticalTrackHeight(width, height)
 	visibleRows := trackHeight
 	totalRows := len(d.rows)
 	if width <= 0 || trackHeight <= 0 || totalRows <= visibleRows {
@@ -288,11 +326,20 @@ func (d *diffViewer) scrollbar(width int, height int) scrollbar {
 	return scrollbar{
 		Visible: true,
 		Col:     width - scrollbarWidth,
-		Top:     trackTop,
-		Height:  trackHeight,
+		Row:     trackTop,
+		Length:  trackHeight,
 		Thumb:   trackTop + thumbTop,
 		Size:    thumbSize,
 	}
+}
+
+func (d *diffViewer) verticalTrackHeight(width int, height int) int {
+	trackHeight := height - 1
+	_, horizontalVisible := d.scrollbarVisibility(width, height)
+	if horizontalVisible {
+		trackHeight--
+	}
+	return trackHeight
 }
 
 func (d *diffViewer) paintScrollbar(win vaxis.Window) {
@@ -310,17 +357,85 @@ func (d *diffViewer) paintScrollbar(win vaxis.Window) {
 		Foreground: d.scheme.Muted,
 		Background: d.scheme.Background,
 	}
-	for row := bar.Top; row < bar.Top+bar.Height; row++ {
+	for row := bar.Row; row < bar.Row+bar.Length; row++ {
 		style := trackStyle
 		grapheme := "│"
 		if row >= bar.Thumb && row < bar.Thumb+bar.Size {
 			style = thumbStyle
-			grapheme = "█"
+			grapheme = verticalScrollbarThumb
 		}
 		win.SetCell(bar.Col, row, vaxis.Cell{
 			Character: vaxis.Character{
 				Grapheme: grapheme,
 				Width:    scrollbarWidth,
+			},
+			Style: style,
+		})
+	}
+}
+
+func (d *diffViewer) horizontalScrollbar(width int, height int) scrollbar {
+	verticalVisible, horizontalVisible := d.scrollbarVisibility(width, height)
+	trackWidth := horizontalViewportWidth(width, verticalVisible)
+	if width <= 0 || height <= 1 || trackWidth <= 0 {
+		return scrollbar{}
+	}
+
+	contentWidth := d.contentWidth()
+	if !horizontalVisible || contentWidth <= trackWidth {
+		return scrollbar{}
+	}
+
+	thumbSize := (trackWidth * trackWidth) / contentWidth
+	if thumbSize < 1 {
+		thumbSize = 1
+	}
+	if thumbSize > trackWidth {
+		thumbSize = trackWidth
+	}
+
+	maxThumbLeft := trackWidth - thumbSize
+	thumbLeft := 0
+	if maxScroll := d.maxHorizontalScroll(); maxScroll > 0 {
+		thumbLeft = (d.xScroll * maxThumbLeft) / maxScroll
+	}
+
+	return scrollbar{
+		Visible: true,
+		Col:     0,
+		Row:     height - 1,
+		Length:  trackWidth,
+		Thumb:   thumbLeft,
+		Size:    thumbSize,
+	}
+}
+
+func (d *diffViewer) paintHorizontalScrollbar(win vaxis.Window) {
+	width, height := win.Size()
+	bar := d.horizontalScrollbar(width, height)
+	if !bar.Visible {
+		return
+	}
+
+	trackStyle := vaxis.Style{
+		Foreground: d.scheme.Dim,
+		Background: d.scheme.Background,
+	}
+	thumbStyle := vaxis.Style{
+		Foreground: d.scheme.Muted,
+		Background: d.scheme.Background,
+	}
+	for col := bar.Col; col < bar.Col+bar.Length; col++ {
+		style := trackStyle
+		grapheme := "─"
+		if col >= bar.Thumb && col < bar.Thumb+bar.Size {
+			style = thumbStyle
+			grapheme = horizontalScrollbarThumb
+		}
+		win.SetCell(col, bar.Row, vaxis.Cell{
+			Character: vaxis.Character{
+				Grapheme: grapheme,
+				Width:    1,
 			},
 			Style: style,
 		})
@@ -337,9 +452,19 @@ func (d *diffViewer) clampScroll() {
 	}
 }
 
+func (d *diffViewer) clampHorizontalScroll() {
+	maxScroll := d.maxHorizontalScroll()
+	if d.xScroll < 0 {
+		d.xScroll = 0
+	}
+	if d.xScroll > maxScroll {
+		d.xScroll = maxScroll
+	}
+}
+
 func (d *diffViewer) maxScroll() int {
 	maxScroll := len(d.rows) - 1
-	if visible := d.height - 1; visible > 0 {
+	if visible := d.visibleRowCapacity(); visible > 0 {
 		maxScroll = len(d.rows) - visible
 	}
 	if maxScroll < 0 {
@@ -348,8 +473,19 @@ func (d *diffViewer) maxScroll() int {
 	return maxScroll
 }
 
+func (d *diffViewer) visibleRowCapacity() int {
+	_, horizontalVisible := d.scrollbarVisibility(d.width, d.height)
+	return visibleRowCapacity(d.height, horizontalVisible)
+}
+
 func (d *diffViewer) scrollBy(delta int) {
 	d.scroll += delta
+	d.clampScroll()
+}
+
+func (d *diffViewer) scrollHorizontalBy(delta int) {
+	d.xScroll += delta
+	d.clampHorizontalScroll()
 	d.clampScroll()
 }
 
@@ -362,11 +498,73 @@ func (d *diffViewer) scrollBottom() {
 }
 
 func (d *diffViewer) halfPage() int {
-	visible := d.height - 1
+	visible := d.visibleRowCapacity()
 	if visible < 2 {
 		return 1
 	}
 	return visible / 2
+}
+
+func (d *diffViewer) maxHorizontalScroll() int {
+	verticalVisible, horizontalVisible := d.scrollbarVisibility(d.width, d.height)
+	if !horizontalVisible {
+		return 0
+	}
+	maxScroll := d.contentWidth() - horizontalViewportWidth(d.width, verticalVisible)
+	if maxScroll < 0 {
+		return 0
+	}
+	return maxScroll
+}
+
+func (d *diffViewer) scrollbarVisibility(width int, height int) (vertical bool, horizontal bool) {
+	if width <= 0 || height <= 1 {
+		return false, false
+	}
+
+	horizontal = d.contentWidth() > width
+	vertical = len(d.rows) > visibleRowCapacity(height, horizontal)
+	if !horizontal && vertical {
+		horizontal = d.contentWidth() > horizontalViewportWidth(width, vertical)
+		vertical = len(d.rows) > visibleRowCapacity(height, horizontal)
+	}
+	return vertical, horizontal
+}
+
+func visibleRowCapacity(height int, horizontalVisible bool) int {
+	visible := height - 1
+	if horizontalVisible {
+		visible--
+	}
+	if visible < 0 {
+		return 0
+	}
+	return visible
+}
+
+func horizontalViewportWidth(width int, verticalVisible bool) int {
+	if verticalVisible {
+		width -= scrollbarWidth
+	}
+	if width < 0 {
+		return 0
+	}
+	return width
+}
+
+func (d *diffViewer) contentWidth() int {
+	if d.contentWide > 0 {
+		return d.contentWide
+	}
+
+	width := 0
+	for _, row := range d.rows {
+		if rowWidth := textCellWidth(row.Text); rowWidth > width {
+			width = rowWidth
+		}
+	}
+	d.contentWide = width
+	return width
 }
 
 func (d *diffViewer) styleFor(kind diff.RowKind) vaxis.Style {
@@ -473,6 +671,55 @@ func printSegmentsAt(win vaxis.Window, col int, row int, segments ...vaxis.Segme
 
 	line := win.New(col, row, -1, 1)
 	line.PrintTruncate(0, segments...)
+}
+
+func printCodeSegmentsAtOffset(win vaxis.Window, col int, row int, offset int, segments ...vaxis.Segment) {
+	width, height := win.Size()
+	if col >= width || row < 0 || row >= height {
+		return
+	}
+
+	code := win.New(col, row, -1, 1)
+	codeWidth, _ := code.Size()
+	paintSegmentsOffset(code, codeWidth, 0, 0, offset, segments...)
+}
+
+type cellSetter interface {
+	SetCell(col int, row int, cell vaxis.Cell)
+}
+
+func paintSegmentsOffset(dst cellSetter, width int, row int, col int, offset int, segments ...vaxis.Segment) {
+	paintCol := col - offset
+	for _, segment := range segments {
+		for _, char := range vaxis.Characters(segment.Text) {
+			if paintCol >= width {
+				return
+			}
+			if paintCol >= 0 && char.Width > 0 && paintCol+char.Width <= width {
+				dst.SetCell(paintCol, row, vaxis.Cell{
+					Character: char,
+					Style:     segment.Style,
+				})
+			}
+			paintCol += char.Width
+		}
+	}
+}
+
+func segmentTextWidth(segments []vaxis.Segment) int {
+	width := 0
+	for _, segment := range segments {
+		width += textCellWidth(segment.Text)
+	}
+	return width
+}
+
+func textCellWidth(text string) int {
+	width := 0
+	for _, char := range vaxis.Characters(text) {
+		width += char.Width
+	}
+	return width
 }
 
 func applyInlineSpans(segments []vaxis.Segment, spans []diff.InlineSpan, background vaxis.Color) []vaxis.Segment {

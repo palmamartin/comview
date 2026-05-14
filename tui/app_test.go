@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -121,6 +122,65 @@ func TestDiffViewerUsesInlineChangeBackgrounds(t *testing.T) {
 	}
 }
 
+func TestDiffViewerCachesRenderedCodeSegments(t *testing.T) {
+	viewer := &diffViewer{
+		rows: []diff.Row{
+			{
+				Kind:     diff.RowAdd,
+				Code:     "hello",
+				FileName: "example.txt",
+				InlineSpans: []diff.InlineSpan{
+					{Start: 1, End: 4, Kind: diff.InlineChange},
+				},
+			},
+		},
+		highlighter: NewSyntaxHighlighter(),
+	}
+	viewer.ensureColorScheme()
+
+	viewer.ensureRenderCache()
+
+	if len(viewer.codeSegments) != 1 {
+		t.Fatalf("cached rows = %d, want 1", len(viewer.codeSegments))
+	}
+	segments := viewer.codeSegments[0]
+	if len(segments) != 3 {
+		t.Fatalf("segments = %+v, want 3", segments)
+	}
+	if segments[0].Text != "h" || segments[0].Style.Background == viewer.scheme.AddInline {
+		t.Fatalf("first segment = %+v", segments[0])
+	}
+	if segments[1].Text != "ell" || segments[1].Style.Background != viewer.scheme.AddInline {
+		t.Fatalf("inline segment = %+v, want add inline background", segments[1])
+	}
+	if segments[2].Text != "o" || segments[2].Style.Background == viewer.scheme.AddInline {
+		t.Fatalf("last segment = %+v", segments[2])
+	}
+
+	cached := viewer.codeSegments
+	viewer.ensureRenderCache()
+	if &viewer.codeSegments[0][0] != &cached[0][0] {
+		t.Fatal("render cache rebuilt when rows did not change")
+	}
+}
+
+func TestDiffViewerInvalidatesRenderCacheWhenTerminalColorsChange(t *testing.T) {
+	viewer := &diffViewer{
+		rows: []diff.Row{
+			{Kind: diff.RowAdd, Code: "hello", FileName: "example.txt"},
+		},
+		highlighter: NewSyntaxHighlighter(),
+	}
+	viewer.ensureColorScheme()
+	viewer.ensureRenderCache()
+
+	viewer.SetTerminalColors(TerminalColors{Green: vaxis.RGBColor(1, 2, 3)})
+
+	if viewer.codeSegments != nil {
+		t.Fatalf("code segment cache = %+v, want nil", viewer.codeSegments)
+	}
+}
+
 func TestDiffViewerUsesMutedGutterForegroundForChangedLines(t *testing.T) {
 	viewer := &diffViewer{}
 	viewer.ensureColorScheme()
@@ -237,6 +297,63 @@ func TestDiffViewerVimNavigationKeys(t *testing.T) {
 			}
 			if viewer.keys.Pending() != tt.wantPend {
 				t.Fatalf("pending keys = %q, want %q", viewer.keys.Pending(), tt.wantPend)
+			}
+		})
+	}
+}
+
+func TestDiffViewerHorizontalNavigationKeys(t *testing.T) {
+	tests := []struct {
+		name  string
+		start int
+		key   vaxis.Key
+		want  int
+	}{
+		{
+			name: "l scrolls right",
+			key:  vaxis.Key{Text: "l", Keycode: 'l'},
+			want: 1,
+		},
+		{
+			name: "Right scrolls right",
+			key:  vaxis.Key{Keycode: vaxis.KeyRight},
+			want: 1,
+		},
+		{
+			name:  "h scrolls left",
+			start: 5,
+			key:   vaxis.Key{Text: "h", Keycode: 'h'},
+			want:  4,
+		},
+		{
+			name:  "Left scrolls left",
+			start: 5,
+			key:   vaxis.Key{Keycode: vaxis.KeyLeft},
+			want:  4,
+		},
+		{
+			name:  "left clamps at zero",
+			start: 0,
+			key:   vaxis.Key{Keycode: vaxis.KeyLeft},
+			want:  0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			viewer := newTestDiffViewer(3, 10)
+			viewer.rows[0].Text = strings.Repeat("x", 120)
+			viewer.xScroll = tt.start
+
+			cmd, err := viewer.HandleEvent(tt.key)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if cmd != CommandRedraw {
+				t.Fatalf("command = %v, want %v", cmd, CommandRedraw)
+			}
+			if viewer.xScroll != tt.want {
+				t.Fatalf("xScroll = %d, want %d", viewer.xScroll, tt.want)
 			}
 		})
 	}
@@ -371,8 +488,8 @@ func TestDiffViewerScrollbar(t *testing.T) {
 			want: scrollbar{
 				Visible: true,
 				Col:     79,
-				Top:     1,
-				Height:  10,
+				Row:     1,
+				Length:  10,
 				Thumb:   1,
 				Size:    1,
 			},
@@ -386,8 +503,8 @@ func TestDiffViewerScrollbar(t *testing.T) {
 			want: scrollbar{
 				Visible: true,
 				Col:     79,
-				Top:     1,
-				Height:  10,
+				Row:     1,
+				Length:  10,
 				Thumb:   5,
 				Size:    1,
 			},
@@ -401,8 +518,8 @@ func TestDiffViewerScrollbar(t *testing.T) {
 			want: scrollbar{
 				Visible: true,
 				Col:     79,
-				Top:     1,
-				Height:  10,
+				Row:     1,
+				Length:  10,
 				Thumb:   10,
 				Size:    1,
 			},
@@ -415,8 +532,8 @@ func TestDiffViewerScrollbar(t *testing.T) {
 			want: scrollbar{
 				Visible: true,
 				Col:     79,
-				Top:     1,
-				Height:  10,
+				Row:     1,
+				Length:  10,
 				Thumb:   1,
 				Size:    5,
 			},
@@ -436,6 +553,120 @@ func TestDiffViewerScrollbar(t *testing.T) {
 	}
 }
 
+func TestDiffViewerHorizontalScrollbar(t *testing.T) {
+	tests := []struct {
+		name    string
+		width   int
+		height  int
+		content string
+		xScroll int
+		rows    int
+		want    scrollbar
+	}{
+		{
+			name:    "hidden when content fits",
+			width:   20,
+			height:  10,
+			content: "short",
+			want:    scrollbar{},
+		},
+		{
+			name:    "top",
+			width:   20,
+			height:  10,
+			content: "0123456789012345678901234567890123456789",
+			want: scrollbar{
+				Visible: true,
+				Col:     0,
+				Row:     9,
+				Length:  20,
+				Thumb:   0,
+				Size:    10,
+			},
+		},
+		{
+			name:    "middle with vertical scrollbar",
+			width:   20,
+			height:  10,
+			rows:    20,
+			content: "0123456789012345678901234567890123456789",
+			xScroll: 10,
+			want: scrollbar{
+				Visible: true,
+				Col:     0,
+				Row:     9,
+				Length:  19,
+				Thumb:   4,
+				Size:    9,
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rows := tt.rows
+			if rows == 0 {
+				rows = 1
+			}
+			viewer := newTestDiffViewer(rows, tt.height)
+			viewer.width = tt.width
+			viewer.rows[0].Text = tt.content
+			viewer.xScroll = tt.xScroll
+			got := viewer.horizontalScrollbar(tt.width, tt.height)
+
+			if got != tt.want {
+				t.Fatalf("horizontal scrollbar = %+v, want %+v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestPaintSegmentsOffset(t *testing.T) {
+	base := vaxis.Style{Foreground: vaxis.RGBColor(1, 2, 3)}
+	alt := vaxis.Style{Foreground: vaxis.RGBColor(4, 5, 6)}
+	segments := []vaxis.Segment{
+		{Text: "abc", Style: base},
+		{Text: "def", Style: alt},
+		{Text: "ghi", Style: base},
+	}
+	cells := testCells{}
+
+	paintSegmentsOffset(cells, 5, 0, 0, 2, segments...)
+
+	if got, want := cells.text(5), "cdefg"; got != want {
+		t.Fatalf("text = %q, want %q", got, want)
+	}
+	if got := cells[0].Style; got != base {
+		t.Fatalf("first style = %+v, want %+v", got, base)
+	}
+	if got := cells[1].Style; got != alt {
+		t.Fatalf("second style = %+v, want %+v", got, alt)
+	}
+	if got := cells[4].Style; got != base {
+		t.Fatalf("last style = %+v, want %+v", got, base)
+	}
+}
+
+func TestPaintSegmentsOffsetUsesCellWidths(t *testing.T) {
+	base := vaxis.Style{Foreground: vaxis.RGBColor(1, 2, 3)}
+	segments := []vaxis.Segment{{Text: "a\tb", Style: base}}
+	cells := testCells{}
+
+	paintSegmentsOffset(cells, 4, 0, 0, 1, segments...)
+
+	if got, want := cells.text(4), "    "; got != want {
+		t.Fatalf("text = %q, want %q", got, want)
+	}
+}
+
+func TestSegmentTextWidthUsesCellWidths(t *testing.T) {
+	got := segmentTextWidth([]vaxis.Segment{{Text: "a\tb"}})
+
+	if got != 10 {
+		t.Fatalf("width = %d, want 10", got)
+	}
+}
+
 func newTestDiffViewer(rows int, height int) *diffViewer {
 	viewer := &diffViewer{
 		rows: make([]diff.Row, rows),
@@ -445,6 +676,20 @@ func newTestDiffViewer(rows int, height int) *diffViewer {
 		Height: height,
 	}))
 	return viewer
+}
+
+type testCells map[int]vaxis.Cell
+
+func (t testCells) SetCell(col int, row int, cell vaxis.Cell) {
+	t[col] = cell
+}
+
+func (t testCells) text(width int) string {
+	var b strings.Builder
+	for col := 0; col < width; col++ {
+		b.WriteString(t[col].Character.Grapheme)
+	}
+	return b.String()
 }
 
 func TestApplyInlineSpans(t *testing.T) {
