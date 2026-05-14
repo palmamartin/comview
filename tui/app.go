@@ -9,6 +9,7 @@ import (
 )
 
 const pendingKeyTimeout = 800 * time.Millisecond
+const mouseWheelScrollLines = 1
 
 // Run starts the comview TUI.
 func Run(input string) error {
@@ -46,11 +47,17 @@ func (d *diffViewer) SetTerminalColors(colors TerminalColors) {
 }
 
 func (d *diffViewer) HandleEvent(ev vaxis.Event) (Command, error) {
-	key, ok := ev.(vaxis.Key)
-	if !ok {
+	switch ev := ev.(type) {
+	case vaxis.Key:
+		return d.handleKey(ev)
+	case vaxis.Mouse:
+		return d.handleMouse(ev)
+	default:
 		return CommandNone, nil
 	}
+}
 
+func (d *diffViewer) handleKey(key vaxis.Key) (Command, error) {
 	d.keys.ClearExpired(time.Now())
 
 	switch {
@@ -92,6 +99,21 @@ func (d *diffViewer) HandleEvent(ev vaxis.Event) (Command, error) {
 		return CommandRedraw, nil
 	default:
 		d.keys.Clear()
+		return CommandNone, nil
+	}
+}
+
+func (d *diffViewer) handleMouse(mouse vaxis.Mouse) (Command, error) {
+	switch mouse.Button {
+	case vaxis.MouseWheelDown:
+		d.keys.Clear()
+		d.scrollBy(mouseWheelScrollLines)
+		return CommandRedraw, nil
+	case vaxis.MouseWheelUp:
+		d.keys.Clear()
+		d.scrollBy(-mouseWheelScrollLines)
+		return CommandRedraw, nil
+	default:
 		return CommandNone, nil
 	}
 }
