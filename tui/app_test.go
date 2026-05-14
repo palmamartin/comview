@@ -459,6 +459,19 @@ func TestDiffViewerStatusFillUsesDistinctBackground(t *testing.T) {
 	}
 }
 
+func TestDiffViewerStatusModeWidthMatchesPaintedSegments(t *testing.T) {
+	viewer := &diffViewer{}
+	viewer.ensureColorScheme()
+
+	segments := viewer.statusModeSegments(viewer.statusCommitBackground())
+	if got, want := segmentsWidth(segments), textCellWidth(segmentsText(segments)); got != want {
+		t.Fatalf("mode width = %d, want painted width %d", got, want)
+	}
+	if got, want := segmentsText(segments), " NORMAL "; got != want {
+		t.Fatalf("mode segments = %q, want %q", got, want)
+	}
+}
+
 func TestDiffViewerStatusContextShowsSectionedFileAndTotals(t *testing.T) {
 	viewer := &diffViewer{
 		rows: []diff.Row{
@@ -474,7 +487,7 @@ func TestDiffViewerStatusContextShowsSectionedFileAndTotals(t *testing.T) {
 	viewer.ensureColorScheme()
 
 	left := viewer.statusLeftSegments()
-	if got, want := segmentsText(left), "abc123456789  1/2 one.go  +1 -1"; got != want {
+	if got, want := segmentsText(left), " abc123456789  1/2 one.go  +1 -1"; got != want {
 		t.Fatalf("left status = %q, want %q", got, want)
 	}
 	if left[0].Style.Background == viewer.statusBackground() {
@@ -482,6 +495,15 @@ func TestDiffViewerStatusContextShowsSectionedFileAndTotals(t *testing.T) {
 	}
 	if left[0].Style.Foreground != viewer.scheme.Base.Blue {
 		t.Fatalf("commit section foreground = %v, want blue %v", left[0].Style.Foreground, viewer.scheme.Base.Blue)
+	}
+	if left[2].Style.Background != viewer.statusBackground() {
+		t.Fatalf("file section background = %v, want status background %v", left[2].Style.Background, viewer.statusBackground())
+	}
+	if left[2].Style.Attribute == vaxis.AttrBold {
+		t.Fatalf("file context prefix style = %+v, want regular", left[2].Style)
+	}
+	if left[3].Text != "one.go" || left[3].Style.Attribute != vaxis.AttrBold {
+		t.Fatalf("file context base segment = %q %+v, want bold file name", left[3].Text, left[3].Style)
 	}
 	if left[len(left)-3].Style.Foreground != viewer.scheme.Add {
 		t.Fatalf("add stat style = %+v, want add foreground %v", left[len(left)-3].Style, viewer.scheme.Add)
@@ -508,7 +530,7 @@ func TestDiffViewerStatusContextShowsCountsWhenMultipleCommits(t *testing.T) {
 	}
 	viewer.ensureColorScheme()
 
-	if got, want := segmentsText(viewer.statusLeftSegments()), "2/2 def123456789  2/2 two.go  +0 -0"; got != want {
+	if got, want := segmentsText(viewer.statusLeftSegments()), " 2/2 def123456789  2/2 two.go  +0 -0"; got != want {
 		t.Fatalf("left status = %q, want %q", got, want)
 	}
 }

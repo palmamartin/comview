@@ -659,17 +659,9 @@ func (d *diffViewer) paintStatusBar(win vaxis.Window) {
 	if len(leftSegments) > 0 {
 		separatorBackground = leftSegments[0].Style.Background
 	}
-	modeWidth := textCellWidth(" " + d.modeLabel() + "  ")
-	printSegmentsAt(win, 0, row,
-		vaxis.Segment{
-			Text:  " " + d.modeLabel() + " ",
-			Style: d.statusStyle(),
-		},
-		vaxis.Segment{
-			Text:  "",
-			Style: d.statusSeparatorStyle(separatorBackground),
-		},
-	)
+	modeSegments := d.statusModeSegments(separatorBackground)
+	modeWidth := segmentsWidth(modeSegments)
+	printSegmentsAt(win, 0, row, modeSegments...)
 	if d.statusMessage != "" {
 		printSegmentsAt(win, modeWidth, row, vaxis.Segment{
 			Text:  d.statusMessage,
@@ -694,6 +686,19 @@ func (d *diffViewer) paintStatusBar(win vaxis.Window) {
 	printSegmentsClipped(win, modeWidth, row, leftWidth, leftSegments...)
 	if len(rightSegments) > 0 {
 		printSegmentsAt(win, width-rightWidth-1, row, rightSegments...)
+	}
+}
+
+func (d *diffViewer) statusModeSegments(separatorBackground vaxis.Color) []vaxis.Segment {
+	return []vaxis.Segment{
+		vaxis.Segment{
+			Text:  " " + d.modeLabel() + " ",
+			Style: d.statusStyle(),
+		},
+		vaxis.Segment{
+			Text:  "",
+			Style: d.statusSeparatorStyle(separatorBackground),
+		},
 	}
 }
 
@@ -742,7 +747,9 @@ func (d *diffViewer) statusLeftSegments() []vaxis.Segment {
 		sections = append(sections, statusSection{
 			Text:       file,
 			Foreground: d.scheme.Foreground,
-			Background: d.statusFileBackground(),
+			Background: d.statusBackground(),
+			Separator:  "",
+			PathBase:   true,
 		})
 	}
 
@@ -771,6 +778,8 @@ type statusSection struct {
 	Text       string
 	Foreground vaxis.Color
 	Background vaxis.Color
+	Separator  string
+	PathBase   bool
 }
 
 func (d *diffViewer) statusSectionSegments(sections []statusSection) []vaxis.Segment {
@@ -784,28 +793,77 @@ func (d *diffViewer) statusSectionSegments(sections []statusSection) []vaxis.Seg
 			nextBackground = sections[index+1].Background
 		}
 		text := " " + section.Text + " "
-		if index == 0 {
-			text = section.Text + " "
+		separator := section.Separator
+		if separator == "" {
+			separator = ""
 		}
-		segments = append(segments,
-			vaxis.Segment{
-				Text: text,
-				Style: vaxis.Style{
-					Foreground: section.Foreground,
-					Background: section.Background,
-					Attribute:  vaxis.AttrBold,
-				},
-			},
-			vaxis.Segment{
-				Text: "",
-				Style: vaxis.Style{
-					Foreground: section.Background,
-					Background: nextBackground,
-				},
-			},
-		)
+		separatorStyle := vaxis.Style{
+			Foreground: section.Background,
+			Background: nextBackground,
+		}
+		if separator == "" {
+			separatorStyle = vaxis.Style{
+				Foreground: section.Foreground,
+				Background: section.Background,
+			}
+		}
+		segments = append(segments, d.statusSectionTextSegments(section, text)...)
+		segments = append(segments, vaxis.Segment{
+			Text:  separator,
+			Style: separatorStyle,
+		})
 	}
 	return segments
+}
+
+func (d *diffViewer) statusSectionTextSegments(section statusSection, text string) []vaxis.Segment {
+	style := vaxis.Style{
+		Foreground: section.Foreground,
+		Background: section.Background,
+		Attribute:  vaxis.AttrBold,
+	}
+	if !section.PathBase {
+		return []vaxis.Segment{{Text: text, Style: style}}
+	}
+
+	regularStyle := style
+	regularStyle.Attribute = 0
+	prefix, base := splitStatusPathBase(strings.TrimSpace(text))
+	segments := make([]vaxis.Segment, 0, 3)
+	if prefix != "" {
+		segments = append(segments, vaxis.Segment{Text: " " + prefix, Style: regularStyle})
+	} else {
+		segments = append(segments, vaxis.Segment{Text: " ", Style: regularStyle})
+	}
+	segments = append(segments, vaxis.Segment{Text: base, Style: style})
+	segments = append(segments, vaxis.Segment{Text: " ", Style: regularStyle})
+	return segments
+}
+
+func splitStatusPathBase(text string) (string, string) {
+	if text == "" {
+		return "", ""
+	}
+	if space := strings.Index(text, " "); space >= 0 && isStatusCountPrefix(text[:space]) && space+1 < len(text) {
+		return text[:space+1], text[space+1:]
+	}
+	if slash := strings.LastIndex(text, "/"); slash >= 0 && slash+1 < len(text) {
+		return text[:slash+1], text[slash+1:]
+	}
+	return "", text
+}
+
+func isStatusCountPrefix(text string) bool {
+	before, after, ok := strings.Cut(text, "/")
+	if !ok || before == "" || after == "" {
+		return false
+	}
+	for _, r := range before + after {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 func (d *diffViewer) statusStatsSegments(stats statusStats) []vaxis.Segment {
@@ -1184,7 +1242,7 @@ func (d *diffViewer) statusBackground() vaxis.Color {
 }
 
 func (d *diffViewer) statusCommitBackground() vaxis.Color {
-	return blendRGB(d.statusBackground(), d.scheme.Base.Blue, 0.55)
+	return blendRGB(d.statusBackground(), d.scheme.Base.Blue, 0.28)
 }
 
 func (d *diffViewer) statusFileBackground() vaxis.Color {
