@@ -3,6 +3,8 @@ package diff
 import (
 	"fmt"
 	"strings"
+
+	"github.com/rockorager/comview/review"
 )
 
 type RenderOptions struct {
@@ -134,8 +136,26 @@ func renderRow(fileName string, line Line, options RenderOptions) Row {
 		Kind:     rowKind(line.Kind),
 		Text:     gutter + code,
 		FileName: fileName,
+		Review:   reviewAnchor(fileName, line),
 		Gutter:   gutter,
 		Code:     code,
+	}
+}
+
+func reviewAnchor(fileName string, line Line) review.Anchor {
+	switch line.Kind {
+	case Add, Context:
+		if line.NewLine == 0 {
+			return review.Anchor{}
+		}
+		return review.Anchor{Path: fileName, Line: line.NewLine, Side: review.SideRight}
+	case Delete:
+		if line.OldLine == 0 {
+			return review.Anchor{}
+		}
+		return review.Anchor{Path: fileName, Line: line.OldLine, Side: review.SideLeft}
+	default:
+		return review.Anchor{}
 	}
 }
 

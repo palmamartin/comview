@@ -6,6 +6,8 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+
+	"github.com/rockorager/comview/review"
 )
 
 type Document struct {
@@ -49,6 +51,7 @@ type Row struct {
 	Kind        RowKind
 	Text        string
 	FileName    string
+	Review      review.Anchor
 	Gutter      string
 	Marker      string
 	Code        string

@@ -1,6 +1,10 @@
 package diff
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/rockorager/comview/review"
+)
 
 func TestRowsWithOptionsCanHideMetadataAndContext(t *testing.T) {
 	doc, err := Parse(`commit abc123
@@ -29,6 +33,48 @@ index 1111111..2222222 100644
 		case RowPreamble, RowMeta, RowContext:
 			t.Fatalf("unexpected row kind %v with text %q", row.Kind, row.Text)
 		}
+	}
+}
+
+func TestRowsWithOptionsAddsReviewAnchors(t *testing.T) {
+	doc, err := Parse(`diff --git a/main.go b/main.go
+--- a/main.go
++++ b/main.go
+@@ -10,3 +20,3 @@
+ context
+-old
++new
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	rows := doc.RowsWithOptions(RenderOptions{
+		ShowHunkHeaders: true,
+		ShowContext:     true,
+		ShowLineNumbers: true,
+	})
+
+	var contextRow, deleteRow, addRow Row
+	for _, row := range rows {
+		switch row.Kind {
+		case RowContext:
+			contextRow = row
+		case RowDelete:
+			deleteRow = row
+		case RowAdd:
+			addRow = row
+		}
+	}
+
+	if got, want := contextRow.Review, (review.Anchor{Path: "main.go", Line: 20, Side: review.SideRight}); got != want {
+		t.Fatalf("context review anchor = %+v, want %+v", got, want)
+	}
+	if got, want := deleteRow.Review, (review.Anchor{Path: "main.go", Line: 11, Side: review.SideLeft}); got != want {
+		t.Fatalf("delete review anchor = %+v, want %+v", got, want)
+	}
+	if got, want := addRow.Review, (review.Anchor{Path: "main.go", Line: 21, Side: review.SideRight}); got != want {
+		t.Fatalf("add review anchor = %+v, want %+v", got, want)
 	}
 }
 
