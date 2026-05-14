@@ -141,6 +141,127 @@ func TestDiffViewerUsesMutedGutterForegroundForChangedLines(t *testing.T) {
 	}
 }
 
+func TestDiffViewerVimNavigationKeys(t *testing.T) {
+	tests := []struct {
+		name      string
+		start     int
+		key       vaxis.Key
+		want      int
+		wantCmd   Command
+		pendingG  bool
+		wantPendG bool
+	}{
+		{
+			name:    "G scrolls to bottom",
+			key:     vaxis.Key{Text: "G", Keycode: 'G'},
+			want:    91,
+			wantCmd: CommandRedraw,
+		},
+		{
+			name:    "End scrolls to bottom",
+			key:     vaxis.Key{Keycode: vaxis.KeyEnd},
+			want:    91,
+			wantCmd: CommandRedraw,
+		},
+		{
+			name:    "Home scrolls to top",
+			start:   40,
+			key:     vaxis.Key{Keycode: vaxis.KeyHome},
+			want:    0,
+			wantCmd: CommandRedraw,
+		},
+		{
+			name:    "Ctrl+d scrolls down half page",
+			start:   10,
+			key:     vaxis.Key{Keycode: 'd', Modifiers: vaxis.ModCtrl},
+			want:    14,
+			wantCmd: CommandRedraw,
+		},
+		{
+			name:    "Page Down scrolls down half page",
+			start:   10,
+			key:     vaxis.Key{Keycode: vaxis.KeyPgDown},
+			want:    14,
+			wantCmd: CommandRedraw,
+		},
+		{
+			name:    "Ctrl+u scrolls up half page",
+			start:   10,
+			key:     vaxis.Key{Keycode: 'u', Modifiers: vaxis.ModCtrl},
+			want:    6,
+			wantCmd: CommandRedraw,
+		},
+		{
+			name:    "Page Up scrolls up half page",
+			start:   10,
+			key:     vaxis.Key{Keycode: vaxis.KeyPgUp},
+			want:    6,
+			wantCmd: CommandRedraw,
+		},
+		{
+			name:      "g waits for second g",
+			start:     10,
+			key:       vaxis.Key{Text: "g", Keycode: 'g'},
+			want:      10,
+			wantCmd:   CommandNone,
+			wantPendG: true,
+		},
+		{
+			name:     "second g scrolls to top",
+			start:    10,
+			key:      vaxis.Key{Text: "g", Keycode: 'g'},
+			want:     0,
+			wantCmd:  CommandRedraw,
+			pendingG: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			viewer := newTestDiffViewer(100, 10)
+			viewer.scroll = tt.start
+			viewer.pendingG = tt.pendingG
+
+			cmd, err := viewer.HandleEvent(tt.key)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if cmd != tt.wantCmd {
+				t.Fatalf("command = %v, want %v", cmd, tt.wantCmd)
+			}
+			if viewer.scroll != tt.want {
+				t.Fatalf("scroll = %d, want %d", viewer.scroll, tt.want)
+			}
+			if viewer.pendingG != tt.wantPendG {
+				t.Fatalf("pendingG = %v, want %v", viewer.pendingG, tt.wantPendG)
+			}
+		})
+	}
+}
+
+func TestDiffViewerCtrlDDoesNotQuit(t *testing.T) {
+	viewer := newTestDiffViewer(100, 10)
+
+	cmd, err := viewer.HandleEvent(vaxis.Key{Keycode: 'd', Modifiers: vaxis.ModCtrl})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cmd == CommandQuit {
+		t.Fatal("Ctrl+d quit, want scroll command")
+	}
+}
+
+func newTestDiffViewer(rows int, height int) *diffViewer {
+	viewer := &diffViewer{
+		rows: make([]diff.Row, rows),
+	}
+	viewer.Layout(Tight(Size{
+		Width:  80,
+		Height: height,
+	}))
+	return viewer
+}
+
 func TestApplyInlineSpans(t *testing.T) {
 	base := vaxis.Style{
 		Foreground: vaxis.RGBColor(1, 2, 3),

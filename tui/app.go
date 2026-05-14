@@ -28,6 +28,7 @@ type diffViewer struct {
 	rows        []diff.Row
 	scroll      int
 	height      int
+	pendingG    bool
 	scheme      ColorScheme
 	highlighter *SyntaxHighlighter
 }
@@ -48,20 +49,43 @@ func (d *diffViewer) HandleEvent(ev vaxis.Event) (Command, error) {
 
 	switch {
 	case key.Matches('c', vaxis.ModCtrl),
-		key.Matches('d', vaxis.ModCtrl),
 		key.Matches('q'),
 		key.MatchString("Esc"):
 		return CommandQuit, nil
+	case key.Matches('g'):
+		if d.pendingG {
+			d.pendingG = false
+			d.scrollTop()
+			return CommandRedraw, nil
+		}
+		d.pendingG = true
+		return CommandNone, nil
+	case key.Matches('G'), key.Matches(vaxis.KeyEnd):
+		d.pendingG = false
+		d.scrollBottom()
+		return CommandRedraw, nil
+	case key.Matches(vaxis.KeyHome):
+		d.pendingG = false
+		d.scrollTop()
+		return CommandRedraw, nil
+	case key.Matches('d', vaxis.ModCtrl), key.Matches(vaxis.KeyPgDown):
+		d.pendingG = false
+		d.scrollBy(d.halfPage())
+		return CommandRedraw, nil
+	case key.Matches('u', vaxis.ModCtrl), key.Matches(vaxis.KeyPgUp):
+		d.pendingG = false
+		d.scrollBy(-d.halfPage())
+		return CommandRedraw, nil
 	case key.Matches('j'), key.MatchString("Down"):
-		d.scroll++
-		d.clampScroll()
+		d.pendingG = false
+		d.scrollBy(1)
 		return CommandRedraw, nil
 	case key.Matches('k'), key.MatchString("Up"):
-		if d.scroll > 0 {
-			d.scroll--
-		}
+		d.pendingG = false
+		d.scrollBy(-1)
 		return CommandRedraw, nil
 	default:
+		d.pendingG = false
 		return CommandNone, nil
 	}
 }
@@ -108,7 +132,7 @@ func (d *diffViewer) Paint(win vaxis.Window) {
 		return
 	}
 
-	printAt(win, 10, 0, "j/k or arrows scroll, q quits", mutedStyle)
+	printAt(win, 10, 0, "j/k, gg/G, Ctrl+d/u scroll, q quits", mutedStyle)
 
 	for row, diffRow := range d.visibleRows() {
 		d.printRow(win, row+1, diffRow)
@@ -192,6 +216,16 @@ func (d *diffViewer) visibleRows() []diff.Row {
 }
 
 func (d *diffViewer) clampScroll() {
+	maxScroll := d.maxScroll()
+	if d.scroll < 0 {
+		d.scroll = 0
+	}
+	if d.scroll > maxScroll {
+		d.scroll = maxScroll
+	}
+}
+
+func (d *diffViewer) maxScroll() int {
 	maxScroll := len(d.rows) - 1
 	if visible := d.height - 1; visible > 0 {
 		maxScroll = len(d.rows) - visible
@@ -199,9 +233,28 @@ func (d *diffViewer) clampScroll() {
 	if maxScroll < 0 {
 		maxScroll = 0
 	}
-	if d.scroll > maxScroll {
-		d.scroll = maxScroll
+	return maxScroll
+}
+
+func (d *diffViewer) scrollBy(delta int) {
+	d.scroll += delta
+	d.clampScroll()
+}
+
+func (d *diffViewer) scrollTop() {
+	d.scroll = 0
+}
+
+func (d *diffViewer) scrollBottom() {
+	d.scroll = d.maxScroll()
+}
+
+func (d *diffViewer) halfPage() int {
+	visible := d.height - 1
+	if visible < 2 {
+		return 1
 	}
+	return visible / 2
 }
 
 func (d *diffViewer) styleFor(kind diff.RowKind) vaxis.Style {
