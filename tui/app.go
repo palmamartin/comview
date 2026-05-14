@@ -55,7 +55,8 @@ func (d *diffViewer) HandleEvent(ev vaxis.Event) (Command, error) {
 	}
 }
 
-func (d *diffViewer) Layout(size Size) Size {
+func (d *diffViewer) Layout(constraints Constraints) Size {
+	size := constraints.Constrain(constraints.Max)
 	d.height = size.Height
 	d.clampScroll()
 	return size

@@ -13,6 +13,34 @@ type Size struct {
 	Height int
 }
 
+type Constraints struct {
+	Min Size
+	Max Size
+}
+
+func Tight(size Size) Constraints {
+	return Constraints{
+		Min: size,
+		Max: size,
+	}
+}
+
+func (c Constraints) Constrain(size Size) Size {
+	if size.Width < c.Min.Width {
+		size.Width = c.Min.Width
+	}
+	if size.Height < c.Min.Height {
+		size.Height = c.Min.Height
+	}
+	if size.Width > c.Max.Width {
+		size.Width = c.Max.Width
+	}
+	if size.Height > c.Max.Height {
+		size.Height = c.Max.Height
+	}
+	return size
+}
+
 type Command int
 
 const (
@@ -23,7 +51,7 @@ const (
 
 type Widget interface {
 	HandleEvent(vaxis.Event) (Command, error)
-	Layout(Size) Size
+	Layout(Constraints) Size
 	Paint(vaxis.Window)
 }
 
@@ -86,10 +114,10 @@ func (a *App) Run() error {
 func (a *App) draw() {
 	win := a.vx.Window()
 	width, height := win.Size()
-	a.root.Layout(Size{Width: width, Height: height})
+	size := a.root.Layout(Tight(Size{Width: width, Height: height}))
 
 	win.Clear()
-	a.root.Paint(win)
+	a.root.Paint(win.New(0, 0, size.Width, size.Height))
 	a.vx.Render()
 }
 
