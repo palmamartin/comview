@@ -20,6 +20,7 @@ const (
 	codeBackgroundBlend     = 0.035
 	selectionBlend          = 0.40
 	yankHighlightBlend      = 0.50
+	cursorLineBlend         = 0.10
 	gutterBackgroundBlend   = 0.35
 )
 

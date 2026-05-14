@@ -152,6 +152,47 @@ func TestDiffViewerUsesInlineChangeBackgrounds(t *testing.T) {
 	}
 }
 
+func TestDiffViewerCursorLineStyleIsBlendedRGB(t *testing.T) {
+	viewer := &diffViewer{}
+	viewer.ensureColorScheme()
+	base := vaxis.Style{
+		Foreground: vaxis.RGBColor(1, 2, 3),
+		Background: viewer.scheme.Code,
+	}
+
+	got := viewer.rowStyle(base, true)
+	want := blendRGB(base.Background, viewer.scheme.Foreground, cursorLineBlend)
+	if got.Background != want {
+		t.Fatalf("cursor line background = %v, want %v", got.Background, want)
+	}
+	if params := got.Background.Params(); len(params) != 3 {
+		t.Fatalf("cursor line background params = %v, want RGB params", params)
+	}
+	if got.Foreground != base.Foreground {
+		t.Fatalf("cursor line foreground = %v, want %v", got.Foreground, base.Foreground)
+	}
+}
+
+func TestDiffViewerCursorLineSegmentsDoNotMutateCachedSegments(t *testing.T) {
+	viewer := &diffViewer{}
+	viewer.ensureColorScheme()
+	segments := []vaxis.Segment{{
+		Text: "hello",
+		Style: vaxis.Style{
+			Foreground: vaxis.RGBColor(1, 2, 3),
+			Background: viewer.scheme.Code,
+		},
+	}}
+
+	styled := viewer.rowSegments(segments, true)
+	if styled[0].Style.Background == segments[0].Style.Background {
+		t.Fatalf("styled background = %v, want cursor line background", styled[0].Style.Background)
+	}
+	if segments[0].Style.Background != viewer.scheme.Code {
+		t.Fatalf("cached segment background mutated to %v", segments[0].Style.Background)
+	}
+}
+
 func TestDiffViewerCachesRenderedCodeSegments(t *testing.T) {
 	viewer := &diffViewer{
 		rows: []diff.Row{
@@ -286,76 +327,130 @@ func TestDiffViewerStickyFileHeader(t *testing.T) {
 
 func TestDiffViewerVimNavigationKeys(t *testing.T) {
 	tests := []struct {
-		name     string
-		start    int
-		key      vaxis.Key
-		want     int
-		wantCmd  Command
-		pending  string
-		wantPend string
+		name       string
+		start      int
+		cursor     int
+		key        vaxis.Key
+		wantScroll int
+		wantCursor int
+		wantCmd    Command
+		pending    string
+		wantPend   string
 	}{
 		{
-			name:    "G scrolls to bottom",
-			key:     vaxis.Key{Text: "G", Keycode: 'G'},
-			want:    91,
-			wantCmd: CommandRedraw,
+			name:       "G moves cursor to bottom",
+			key:        vaxis.Key{Text: "G", Keycode: 'G'},
+			wantScroll: 91,
+			wantCursor: 99,
+			wantCmd:    CommandRedraw,
 		},
 		{
-			name:    "End scrolls to bottom",
-			key:     vaxis.Key{Keycode: vaxis.KeyEnd},
-			want:    91,
-			wantCmd: CommandRedraw,
+			name:       "End moves cursor to bottom",
+			key:        vaxis.Key{Keycode: vaxis.KeyEnd},
+			wantScroll: 91,
+			wantCursor: 99,
+			wantCmd:    CommandRedraw,
 		},
 		{
-			name:    "Home scrolls to top",
-			start:   40,
-			key:     vaxis.Key{Keycode: vaxis.KeyHome},
-			want:    0,
-			wantCmd: CommandRedraw,
+			name:       "Home moves cursor to top",
+			start:      40,
+			cursor:     40,
+			key:        vaxis.Key{Keycode: vaxis.KeyHome},
+			wantScroll: 0,
+			wantCursor: 0,
+			wantCmd:    CommandRedraw,
 		},
 		{
-			name:    "Ctrl+d scrolls down half page",
-			start:   10,
-			key:     vaxis.Key{Keycode: 'd', Modifiers: vaxis.ModCtrl},
-			want:    14,
-			wantCmd: CommandRedraw,
+			name:       "j moves cursor down",
+			start:      10,
+			cursor:     10,
+			key:        vaxis.Key{Text: "j", Keycode: 'j'},
+			wantScroll: 10,
+			wantCursor: 11,
+			wantCmd:    CommandRedraw,
 		},
 		{
-			name:    "Page Down scrolls down half page",
-			start:   10,
-			key:     vaxis.Key{Keycode: vaxis.KeyPgDown},
-			want:    14,
-			wantCmd: CommandRedraw,
+			name:       "Down moves cursor down",
+			start:      10,
+			cursor:     10,
+			key:        vaxis.Key{Keycode: vaxis.KeyDown},
+			wantScroll: 10,
+			wantCursor: 11,
+			wantCmd:    CommandRedraw,
 		},
 		{
-			name:    "Ctrl+u scrolls up half page",
-			start:   10,
-			key:     vaxis.Key{Keycode: 'u', Modifiers: vaxis.ModCtrl},
-			want:    6,
-			wantCmd: CommandRedraw,
+			name:       "k moves cursor up",
+			start:      10,
+			cursor:     10,
+			key:        vaxis.Key{Text: "k", Keycode: 'k'},
+			wantScroll: 9,
+			wantCursor: 9,
+			wantCmd:    CommandRedraw,
 		},
 		{
-			name:    "Page Up scrolls up half page",
-			start:   10,
-			key:     vaxis.Key{Keycode: vaxis.KeyPgUp},
-			want:    6,
-			wantCmd: CommandRedraw,
+			name:       "Up moves cursor up",
+			start:      10,
+			cursor:     10,
+			key:        vaxis.Key{Keycode: vaxis.KeyUp},
+			wantScroll: 9,
+			wantCursor: 9,
+			wantCmd:    CommandRedraw,
 		},
 		{
-			name:     "g waits for second g",
-			start:    10,
-			key:      vaxis.Key{Text: "g", Keycode: 'g'},
-			want:     10,
-			wantCmd:  CommandNone,
-			wantPend: "g",
+			name:       "Ctrl+d moves cursor down half page",
+			start:      10,
+			cursor:     10,
+			key:        vaxis.Key{Keycode: 'd', Modifiers: vaxis.ModCtrl},
+			wantScroll: 10,
+			wantCursor: 14,
+			wantCmd:    CommandRedraw,
 		},
 		{
-			name:    "second g scrolls to top",
-			start:   10,
-			key:     vaxis.Key{Text: "g", Keycode: 'g'},
-			want:    0,
-			wantCmd: CommandRedraw,
-			pending: "g",
+			name:       "Page Down moves cursor down half page",
+			start:      10,
+			cursor:     10,
+			key:        vaxis.Key{Keycode: vaxis.KeyPgDown},
+			wantScroll: 10,
+			wantCursor: 14,
+			wantCmd:    CommandRedraw,
+		},
+		{
+			name:       "Ctrl+u moves cursor up half page",
+			start:      10,
+			cursor:     10,
+			key:        vaxis.Key{Keycode: 'u', Modifiers: vaxis.ModCtrl},
+			wantScroll: 6,
+			wantCursor: 6,
+			wantCmd:    CommandRedraw,
+		},
+		{
+			name:       "Page Up moves cursor up half page",
+			start:      10,
+			cursor:     10,
+			key:        vaxis.Key{Keycode: vaxis.KeyPgUp},
+			wantScroll: 6,
+			wantCursor: 6,
+			wantCmd:    CommandRedraw,
+		},
+		{
+			name:       "g waits for second g",
+			start:      10,
+			cursor:     10,
+			key:        vaxis.Key{Text: "g", Keycode: 'g'},
+			wantScroll: 10,
+			wantCursor: 10,
+			wantCmd:    CommandNone,
+			wantPend:   "g",
+		},
+		{
+			name:       "second g moves cursor to top",
+			start:      10,
+			cursor:     10,
+			key:        vaxis.Key{Text: "g", Keycode: 'g'},
+			wantScroll: 0,
+			wantCursor: 0,
+			wantCmd:    CommandRedraw,
+			pending:    "g",
 		},
 	}
 
@@ -363,6 +458,8 @@ func TestDiffViewerVimNavigationKeys(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			viewer := newTestDiffViewer(100, 10)
 			viewer.scroll = tt.start
+			viewer.cursor.Row = tt.cursor
+			viewer.cursorGoal = viewer.cursor.Col
 			if tt.pending != "" {
 				viewer.keys.Set(tt.pending, time.Now())
 			}
@@ -374,8 +471,11 @@ func TestDiffViewerVimNavigationKeys(t *testing.T) {
 			if cmd != tt.wantCmd {
 				t.Fatalf("command = %v, want %v", cmd, tt.wantCmd)
 			}
-			if viewer.scroll != tt.want {
-				t.Fatalf("scroll = %d, want %d", viewer.scroll, tt.want)
+			if viewer.scroll != tt.wantScroll {
+				t.Fatalf("scroll = %d, want %d", viewer.scroll, tt.wantScroll)
+			}
+			if viewer.cursor.Row != tt.wantCursor {
+				t.Fatalf("cursor row = %d, want %d", viewer.cursor.Row, tt.wantCursor)
 			}
 			if viewer.keys.Pending() != tt.wantPend {
 				t.Fatalf("pending keys = %q, want %q", viewer.keys.Pending(), tt.wantPend)
@@ -406,46 +506,62 @@ func TestDiffViewerIgnoresKeyReleaseEvents(t *testing.T) {
 
 func TestDiffViewerHorizontalNavigationKeys(t *testing.T) {
 	tests := []struct {
-		name  string
-		start int
-		key   vaxis.Key
-		want  int
+		name       string
+		start      int
+		cursor     int
+		key        vaxis.Key
+		wantScroll int
+		wantCursor int
 	}{
 		{
-			name: "l scrolls right",
-			key:  vaxis.Key{Text: "l", Keycode: 'l'},
-			want: 1,
+			name:       "l moves cursor right and scrolls at edge",
+			cursor:     79,
+			key:        vaxis.Key{Text: "l", Keycode: 'l'},
+			wantScroll: 1,
+			wantCursor: 80,
 		},
 		{
-			name: "Right scrolls right",
-			key:  vaxis.Key{Keycode: vaxis.KeyRight},
-			want: 1,
+			name:       "Right moves cursor right and scrolls at edge",
+			cursor:     79,
+			key:        vaxis.Key{Keycode: vaxis.KeyRight},
+			wantScroll: 1,
+			wantCursor: 80,
 		},
 		{
-			name:  "h scrolls left",
-			start: 5,
-			key:   vaxis.Key{Text: "h", Keycode: 'h'},
-			want:  4,
+			name:       "h moves cursor left and scrolls at edge",
+			start:      5,
+			cursor:     5,
+			key:        vaxis.Key{Text: "h", Keycode: 'h'},
+			wantScroll: 4,
+			wantCursor: 4,
 		},
 		{
-			name:  "Left scrolls left",
-			start: 5,
-			key:   vaxis.Key{Keycode: vaxis.KeyLeft},
-			want:  4,
+			name:       "Left moves cursor left and scrolls at edge",
+			start:      5,
+			cursor:     5,
+			key:        vaxis.Key{Keycode: vaxis.KeyLeft},
+			wantScroll: 4,
+			wantCursor: 4,
 		},
 		{
-			name:  "left clamps at zero",
-			start: 0,
-			key:   vaxis.Key{Keycode: vaxis.KeyLeft},
-			want:  0,
+			name:       "left clamps at zero",
+			start:      0,
+			cursor:     0,
+			key:        vaxis.Key{Keycode: vaxis.KeyLeft},
+			wantScroll: 0,
+			wantCursor: 0,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			viewer := newTestDiffViewer(3, 10)
-			viewer.rows[0].Text = strings.Repeat("x", 120)
+			viewer.rows[0].Kind = diff.RowContext
+			viewer.rows[0].Code = strings.Repeat("x", 120)
+			viewer.rows[0].Text = viewer.rows[0].Code
 			viewer.xScroll = tt.start
+			viewer.cursor.Col = tt.cursor
+			viewer.cursorGoal = viewer.cursor.Col
 
 			cmd, err := viewer.HandleEvent(tt.key)
 			if err != nil {
@@ -454,8 +570,11 @@ func TestDiffViewerHorizontalNavigationKeys(t *testing.T) {
 			if cmd != CommandRedraw {
 				t.Fatalf("command = %v, want %v", cmd, CommandRedraw)
 			}
-			if viewer.xScroll != tt.want {
-				t.Fatalf("xScroll = %d, want %d", viewer.xScroll, tt.want)
+			if viewer.xScroll != tt.wantScroll {
+				t.Fatalf("xScroll = %d, want %d", viewer.xScroll, tt.wantScroll)
+			}
+			if viewer.cursor.Col != tt.wantCursor {
+				t.Fatalf("cursor col = %d, want %d", viewer.cursor.Col, tt.wantCursor)
 			}
 		})
 	}
@@ -656,6 +775,9 @@ func TestDiffViewerMouseSelectionCopiesText(t *testing.T) {
 	if cmd != CommandRedraw {
 		t.Fatalf("press command = %v, want %v", cmd, CommandRedraw)
 	}
+	if got := viewer.cursor; got != (selectionPoint{Row: 0, Col: 1}) {
+		t.Fatalf("cursor after press = %+v, want row 0 col 1", got)
+	}
 
 	cmd, err = viewer.HandleEvent(vaxis.Mouse{
 		Button:    vaxis.MouseLeftButton,
@@ -668,6 +790,9 @@ func TestDiffViewerMouseSelectionCopiesText(t *testing.T) {
 	}
 	if cmd != CommandRedraw {
 		t.Fatalf("release command = %v, want %v", cmd, CommandRedraw)
+	}
+	if got := viewer.cursor; got != (selectionPoint{Row: 1, Col: 2}) {
+		t.Fatalf("cursor after release = %+v, want row 1 col 2", got)
 	}
 
 	if got, want := viewer.ClipboardText(), "bcde\nfgh"; got != want {
