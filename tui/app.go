@@ -10,6 +10,7 @@ import (
 
 const pendingKeyTimeout = 800 * time.Millisecond
 const mouseWheelScrollLines = 1
+const scrollbarWidth = 1
 
 // Run starts the comview TUI.
 func Run(input string) error {
@@ -166,6 +167,7 @@ func (d *diffViewer) Paint(win vaxis.Window) {
 	for row, diffRow := range d.visibleRows() {
 		d.printRow(win, row+1, diffRow, highlightedRows[d.scroll+row])
 	}
+	d.paintScrollbar(win)
 }
 
 func (d *diffViewer) printRow(win vaxis.Window, row int, diffRow diff.Row, codeSegments []vaxis.Segment) {
@@ -249,6 +251,80 @@ func (d *diffViewer) visibleRows() []diff.Row {
 		end = len(d.rows)
 	}
 	return d.rows[d.scroll:end]
+}
+
+type scrollbar struct {
+	Visible bool
+	Col     int
+	Top     int
+	Height  int
+	Thumb   int
+	Size    int
+}
+
+func (d *diffViewer) scrollbar(width int, height int) scrollbar {
+	trackTop := 1
+	trackHeight := height - trackTop
+	visibleRows := trackHeight
+	totalRows := len(d.rows)
+	if width <= 0 || trackHeight <= 0 || totalRows <= visibleRows {
+		return scrollbar{}
+	}
+
+	thumbSize := (visibleRows * trackHeight) / totalRows
+	if thumbSize < 1 {
+		thumbSize = 1
+	}
+	if thumbSize > trackHeight {
+		thumbSize = trackHeight
+	}
+
+	maxThumbTop := trackHeight - thumbSize
+	thumbTop := 0
+	if maxScroll := d.maxScroll(); maxScroll > 0 {
+		thumbTop = (d.scroll * maxThumbTop) / maxScroll
+	}
+
+	return scrollbar{
+		Visible: true,
+		Col:     width - scrollbarWidth,
+		Top:     trackTop,
+		Height:  trackHeight,
+		Thumb:   trackTop + thumbTop,
+		Size:    thumbSize,
+	}
+}
+
+func (d *diffViewer) paintScrollbar(win vaxis.Window) {
+	width, height := win.Size()
+	bar := d.scrollbar(width, height)
+	if !bar.Visible {
+		return
+	}
+
+	trackStyle := vaxis.Style{
+		Foreground: d.scheme.Dim,
+		Background: d.scheme.Background,
+	}
+	thumbStyle := vaxis.Style{
+		Foreground: d.scheme.Muted,
+		Background: d.scheme.Background,
+	}
+	for row := bar.Top; row < bar.Top+bar.Height; row++ {
+		style := trackStyle
+		grapheme := "│"
+		if row >= bar.Thumb && row < bar.Thumb+bar.Size {
+			style = thumbStyle
+			grapheme = "█"
+		}
+		win.SetCell(bar.Col, row, vaxis.Cell{
+			Character: vaxis.Character{
+				Grapheme: grapheme,
+				Width:    scrollbarWidth,
+			},
+			Style: style,
+		})
+	}
 }
 
 func (d *diffViewer) clampScroll() {

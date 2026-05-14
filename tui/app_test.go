@@ -347,6 +347,95 @@ func TestDiffViewerMouseWheelScrolls(t *testing.T) {
 	}
 }
 
+func TestDiffViewerScrollbar(t *testing.T) {
+	tests := []struct {
+		name   string
+		rows   int
+		height int
+		width  int
+		scroll int
+		want   scrollbar
+	}{
+		{
+			name:   "hidden when rows fit",
+			rows:   5,
+			height: 10,
+			width:  80,
+			want:   scrollbar{},
+		},
+		{
+			name:   "top",
+			rows:   100,
+			height: 11,
+			width:  80,
+			want: scrollbar{
+				Visible: true,
+				Col:     79,
+				Top:     1,
+				Height:  10,
+				Thumb:   1,
+				Size:    1,
+			},
+		},
+		{
+			name:   "middle",
+			rows:   100,
+			height: 11,
+			width:  80,
+			scroll: 45,
+			want: scrollbar{
+				Visible: true,
+				Col:     79,
+				Top:     1,
+				Height:  10,
+				Thumb:   5,
+				Size:    1,
+			},
+		},
+		{
+			name:   "bottom",
+			rows:   100,
+			height: 11,
+			width:  80,
+			scroll: 90,
+			want: scrollbar{
+				Visible: true,
+				Col:     79,
+				Top:     1,
+				Height:  10,
+				Thumb:   10,
+				Size:    1,
+			},
+		},
+		{
+			name:   "larger thumb",
+			rows:   20,
+			height: 11,
+			width:  80,
+			want: scrollbar{
+				Visible: true,
+				Col:     79,
+				Top:     1,
+				Height:  10,
+				Thumb:   1,
+				Size:    5,
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			viewer := newTestDiffViewer(tt.rows, tt.height)
+			viewer.scroll = tt.scroll
+			got := viewer.scrollbar(tt.width, tt.height)
+
+			if got != tt.want {
+				t.Fatalf("scrollbar = %+v, want %+v", got, tt.want)
+			}
+		})
+	}
+}
+
 func newTestDiffViewer(rows int, height int) *diffViewer {
 	viewer := &diffViewer{
 		rows: make([]diff.Row, rows),
