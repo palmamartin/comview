@@ -387,6 +387,31 @@ func TestDiffViewerModeLabels(t *testing.T) {
 	}
 }
 
+func TestDiffViewerStatusColorsFollowMode(t *testing.T) {
+	viewer := &diffViewer{}
+	viewer.ensureColorScheme()
+
+	if got, want := viewer.statusColor(), viewer.scheme.Base.Blue; got != want {
+		t.Fatalf("normal status color = %v, want blue %v", got, want)
+	}
+	if got, want := viewer.statusStyle().Background, viewer.scheme.Base.Blue; got != want {
+		t.Fatalf("normal status background = %v, want blue %v", got, want)
+	}
+
+	viewer.mode = modeVisual
+	if got, want := viewer.statusColor(), viewer.scheme.Base.Magenta; got != want {
+		t.Fatalf("visual status color = %v, want magenta %v", got, want)
+	}
+	if got, want := viewer.statusSeparatorStyle().Foreground, viewer.scheme.Base.Magenta; got != want {
+		t.Fatalf("visual separator foreground = %v, want magenta %v", got, want)
+	}
+
+	viewer.mode = modeVisualLine
+	if got, want := viewer.statusColor(), viewer.scheme.Base.Magenta; got != want {
+		t.Fatalf("visual line status color = %v, want magenta %v", got, want)
+	}
+}
+
 func TestDiffViewerEscReturnsToNormalMode(t *testing.T) {
 	viewer := newTestDiffViewer(10, 10)
 	viewer.mode = modeVisual
@@ -1015,6 +1040,22 @@ func TestDiffViewerMouseSelectionCopiesText(t *testing.T) {
 
 	cmd, err = viewer.HandleEvent(vaxis.Mouse{
 		Button:    vaxis.MouseLeftButton,
+		EventType: vaxis.EventMotion,
+		Row:       1,
+		Col:       codeOffset + 2,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cmd != CommandRedraw {
+		t.Fatalf("motion command = %v, want %v", cmd, CommandRedraw)
+	}
+	if got := viewer.cursor; got != (selectionPoint{Row: 1, Col: codeOffset + 2}) {
+		t.Fatalf("cursor after motion = %+v, want row 1 col %d", got, codeOffset+2)
+	}
+
+	cmd, err = viewer.HandleEvent(vaxis.Mouse{
+		Button:    vaxis.MouseLeftButton,
 		EventType: vaxis.EventRelease,
 		Row:       1,
 		Col:       codeOffset + 2,
@@ -1024,9 +1065,6 @@ func TestDiffViewerMouseSelectionCopiesText(t *testing.T) {
 	}
 	if cmd != CommandRedraw {
 		t.Fatalf("release command = %v, want %v", cmd, CommandRedraw)
-	}
-	if got := viewer.cursor; got != (selectionPoint{Row: 1, Col: codeOffset + 2}) {
-		t.Fatalf("cursor after release = %+v, want row 1 col %d", got, codeOffset+2)
 	}
 
 	if got, want := viewer.ClipboardText(), "bcde\nfgh"; got != want {
@@ -1069,6 +1107,19 @@ func TestDiffViewerMouseSelectionCopiesOnlyCode(t *testing.T) {
 
 	cmd, err = viewer.HandleEvent(vaxis.Mouse{
 		Button:    vaxis.MouseLeftButton,
+		EventType: vaxis.EventMotion,
+		Row:       1,
+		Col:       codeOffset + 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cmd != CommandRedraw {
+		t.Fatalf("motion command = %v, want %v", cmd, CommandRedraw)
+	}
+
+	cmd, err = viewer.HandleEvent(vaxis.Mouse{
+		Button:    vaxis.MouseLeftButton,
 		EventType: vaxis.EventRelease,
 		Row:       1,
 		Col:       codeOffset + 1,
@@ -1085,6 +1136,97 @@ func TestDiffViewerMouseSelectionCopiesOnlyCode(t *testing.T) {
 	}
 	if viewer.mode != modeVisual {
 		t.Fatalf("mode = %v, want visual", viewer.mode)
+	}
+}
+
+func TestDiffViewerClickDoesNotSelect(t *testing.T) {
+	viewer := &diffViewer{
+		rows: []diff.Row{{Kind: diff.RowContext, Text: "abcde", Code: "abcde"}},
+	}
+	viewer.Layout(Tight(Size{Width: 80, Height: 10}))
+
+	cmd, err := viewer.HandleEvent(vaxis.Mouse{
+		Button:    vaxis.MouseLeftButton,
+		EventType: vaxis.EventPress,
+		Row:       0,
+		Col:       2,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cmd != CommandRedraw {
+		t.Fatalf("press command = %v, want %v", cmd, CommandRedraw)
+	}
+	if viewer.selection.Active {
+		t.Fatalf("selection active after press: %+v", viewer.selection)
+	}
+
+	cmd, err = viewer.HandleEvent(vaxis.Mouse{
+		Button:    vaxis.MouseLeftButton,
+		EventType: vaxis.EventRelease,
+		Row:       0,
+		Col:       2,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cmd != CommandNone {
+		t.Fatalf("release command = %v, want %v", cmd, CommandNone)
+	}
+	if viewer.selection.Active {
+		t.Fatalf("selection active after click: %+v", viewer.selection)
+	}
+}
+
+func TestDiffViewerCellDragStartsSelection(t *testing.T) {
+	viewer := &diffViewer{
+		rows: []diff.Row{{Kind: diff.RowContext, Text: "abcdef", Code: "abcdef"}},
+	}
+	viewer.Layout(Tight(Size{Width: 80, Height: 10}))
+
+	_, err := viewer.HandleEvent(vaxis.Mouse{
+		Button:    vaxis.MouseLeftButton,
+		EventType: vaxis.EventPress,
+		Row:       0,
+		Col:       1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cmd, err := viewer.HandleEvent(vaxis.Mouse{
+		Button:    vaxis.MouseLeftButton,
+		EventType: vaxis.EventMotion,
+		Row:       0,
+		Col:       1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cmd != CommandNone {
+		t.Fatalf("small motion command = %v, want %v", cmd, CommandNone)
+	}
+	if viewer.selection.Active {
+		t.Fatalf("selection active before cell drag: %+v", viewer.selection)
+	}
+
+	cmd, err = viewer.HandleEvent(vaxis.Mouse{
+		Button:    vaxis.MouseLeftButton,
+		EventType: vaxis.EventMotion,
+		Row:       0,
+		Col:       2,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cmd != CommandRedraw {
+		t.Fatalf("threshold motion command = %v, want %v", cmd, CommandRedraw)
+	}
+	if !viewer.selection.Active {
+		t.Fatal("selection inactive after cell drag")
+	}
+	if got, want := viewer.ClipboardText(), "bc"; got != want {
+		t.Fatalf("clipboard text = %q, want %q", got, want)
 	}
 }
 
@@ -1300,6 +1442,9 @@ func TestDiffViewerDoubleClickSelectsToken(t *testing.T) {
 	if got, want := viewer.ClipboardText(), "bar"; got != want {
 		t.Fatalf("clipboard text = %q, want %q", got, want)
 	}
+	if got, want := viewer.cursor, (selectionPoint{Row: 0, Col: 6}); got != want {
+		t.Fatalf("cursor = %+v, want %+v", got, want)
+	}
 }
 
 func TestDiffViewerTripleClickSelectsRow(t *testing.T) {
@@ -1331,6 +1476,9 @@ func TestDiffViewerTripleClickSelectsRow(t *testing.T) {
 
 	if got, want := viewer.ClipboardText(), "foo bar.baz"; got != want {
 		t.Fatalf("clipboard text = %q, want %q", got, want)
+	}
+	if got, want := viewer.cursor, (selectionPoint{Row: 0, Col: 5}); got != want {
+		t.Fatalf("cursor = %+v, want %+v", got, want)
 	}
 }
 

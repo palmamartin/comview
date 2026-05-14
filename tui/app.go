@@ -72,6 +72,7 @@ type diffViewer struct {
 	yankSelection textSelection
 	clipboardText string
 	yankUntil     time.Time
+	mouseDrag     mouseDragState
 	clicks        clickState
 	keys          keyChordState
 	scheme        ColorScheme
@@ -88,6 +89,13 @@ type textSelection struct {
 	Dragging bool
 	Anchor   selectionPoint
 	Cursor   selectionPoint
+}
+
+type mouseDragState struct {
+	Active  bool
+	Started bool
+	Mouse   vaxis.Mouse
+	Anchor  selectionPoint
 }
 
 type viewMode int
@@ -420,7 +428,7 @@ func (d *diffViewer) paintStatusBar(win vaxis.Window) {
 		return
 	}
 
-	style := d.statusStyle()
+	fillStyle := d.statusFillStyle()
 	row := height - 1
 	for col := 0; col < width; col++ {
 		win.SetCell(col, row, vaxis.Cell{
@@ -428,17 +436,49 @@ func (d *diffViewer) paintStatusBar(win vaxis.Window) {
 				Grapheme: " ",
 				Width:    1,
 			},
-			Style: style,
+			Style: fillStyle,
 		})
 	}
-	printAt(win, 0, row, " "+d.modeLabel()+" ", style)
+	printSegmentsAt(win, 0, row,
+		vaxis.Segment{
+			Text:  " " + d.modeLabel() + " ",
+			Style: d.statusStyle(),
+		},
+		vaxis.Segment{
+			Text:  "",
+			Style: d.statusSeparatorStyle(),
+		},
+	)
+}
+
+func (d *diffViewer) statusFillStyle() vaxis.Style {
+	return vaxis.Style{
+		Foreground: d.scheme.Foreground,
+		Background: d.scheme.Background,
+	}
 }
 
 func (d *diffViewer) statusStyle() vaxis.Style {
 	return vaxis.Style{
 		Foreground: d.scheme.Background,
-		Background: d.scheme.Header,
+		Background: d.statusColor(),
 		Attribute:  vaxis.AttrBold,
+	}
+}
+
+func (d *diffViewer) statusSeparatorStyle() vaxis.Style {
+	return vaxis.Style{
+		Foreground: d.statusColor(),
+		Background: d.scheme.Background,
+	}
+}
+
+func (d *diffViewer) statusColor() vaxis.Color {
+	switch d.mode {
+	case modeVisual, modeVisualLine:
+		return d.scheme.Base.Magenta
+	default:
+		return d.scheme.Base.Blue
 	}
 }
 
@@ -788,6 +828,7 @@ func (d *diffViewer) paintHorizontalScrollbar(win vaxis.Window) {
 func (d *diffViewer) startSelection(mouse vaxis.Mouse) Command {
 	point, ok := d.selectionPoint(mouse)
 	if !ok {
+		d.mouseDrag = mouseDragState{}
 		if d.selection.Active {
 			d.exitVisualMode()
 			return CommandRedraw
@@ -800,18 +841,19 @@ func (d *diffViewer) startSelection(mouse vaxis.Mouse) Command {
 	d.setCursor(point)
 	switch d.registerClick(point, time.Now()) {
 	case 2:
+		d.mouseDrag = mouseDragState{}
 		return d.selectToken(point)
 	case 3:
-		return d.selectRow(point.Row)
+		d.mouseDrag = mouseDragState{}
+		return d.selectRowAt(point)
 	}
 
-	d.selection = textSelection{
-		Active:   true,
-		Dragging: true,
-		Anchor:   point,
-		Cursor:   point,
+	d.exitVisualMode()
+	d.mouseDrag = mouseDragState{
+		Active: true,
+		Mouse:  mouse,
+		Anchor: point,
 	}
-	d.mode = modeVisual
 	return CommandRedraw
 }
 
@@ -853,8 +895,16 @@ func (d *diffViewer) selectToken(point selectionPoint) Command {
 		},
 	}
 	d.mode = modeVisual
-	d.setCursor(point)
+	d.setCursor(selectionPoint{Row: point.Row, Col: maxInt(start, end-1)})
 	return CommandRedraw
+}
+
+func (d *diffViewer) selectRowAt(point selectionPoint) Command {
+	cmd := d.selectRow(point.Row)
+	if cmd == CommandRedraw {
+		d.setCursor(point)
+	}
+	return cmd
 }
 
 func (d *diffViewer) selectRow(row int) Command {
@@ -883,14 +933,33 @@ func (d *diffViewer) selectRow(row int) Command {
 }
 
 func (d *diffViewer) extendSelection(mouse vaxis.Mouse) Command {
-	if !d.selection.Dragging {
-		return CommandNone
-	}
 	point, ok := d.selectionPoint(mouse)
 	if !ok {
 		return CommandNone
 	}
 
+	if d.mouseDrag.Active {
+		if !d.mouseDrag.Started {
+			if !d.mouseDragExceeded(mouse) {
+				return CommandNone
+			}
+			d.mouseDrag.Started = true
+			d.selection = textSelection{
+				Active:   true,
+				Dragging: true,
+				Anchor:   d.mouseDrag.Anchor,
+				Cursor:   point,
+			}
+			d.mode = modeVisual
+		}
+		d.selection.Cursor = point
+		d.setCursor(point)
+		return CommandRedraw
+	}
+
+	if !d.selection.Dragging {
+		return CommandNone
+	}
 	d.selection.Cursor = point
 	d.setCursor(point)
 	return CommandRedraw
@@ -909,6 +978,13 @@ func (d *diffViewer) extendSelectionAfterScroll(mouse vaxis.Mouse) {
 }
 
 func (d *diffViewer) finishSelection(mouse vaxis.Mouse) Command {
+	if d.mouseDrag.Active {
+		started := d.mouseDrag.Started
+		d.mouseDrag = mouseDragState{}
+		if !started {
+			return CommandNone
+		}
+	}
 	if !d.selection.Dragging {
 		return CommandNone
 	}
@@ -939,6 +1015,11 @@ func (d *diffViewer) selectionPoint(mouse vaxis.Mouse) (selectionPoint, bool) {
 		docCol = end
 	}
 	return selectionPoint{Row: row, Col: docCol}, true
+}
+
+func (d *diffViewer) mouseDragExceeded(mouse vaxis.Mouse) bool {
+	start := d.mouseDrag.Mouse
+	return absInt(mouse.Col-start.Col) > 0 || absInt(mouse.Row-start.Row) > 0
 }
 
 func (d *diffViewer) documentColumn(row diff.Row, screenCol int) int {
@@ -1883,6 +1964,13 @@ func minInt(a int, b int) int {
 		return a
 	}
 	return b
+}
+
+func absInt(value int) int {
+	if value < 0 {
+		return -value
+	}
+	return value
 }
 
 func maxInt(a int, b int) int {
