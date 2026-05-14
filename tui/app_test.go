@@ -48,8 +48,10 @@ func TestDefaultColorSchemeUsesOnlyRGBColors(t *testing.T) {
 		scheme.Yellow,
 		scheme.Add,
 		scheme.AddLine,
+		scheme.AddInline,
 		scheme.Delete,
 		scheme.DeleteLine,
+		scheme.DeleteInline,
 	}
 
 	for _, color := range colors {
@@ -88,6 +90,18 @@ func TestDiffViewerUsesChangedLineBackgrounds(t *testing.T) {
 	}
 }
 
+func TestDiffViewerUsesInlineChangeBackgrounds(t *testing.T) {
+	viewer := &diffViewer{}
+	viewer.ensureColorScheme()
+
+	if got, want := viewer.inlineBackground(diff.RowAdd), viewer.scheme.AddInline; got != want {
+		t.Fatalf("add inline background = %v, want %v", got, want)
+	}
+	if got, want := viewer.inlineBackground(diff.RowDelete), viewer.scheme.DeleteInline; got != want {
+		t.Fatalf("delete inline background = %v, want %v", got, want)
+	}
+}
+
 func TestDiffViewerUsesMutedGutterForegroundForChangedLines(t *testing.T) {
 	viewer := &diffViewer{}
 	viewer.ensureColorScheme()
@@ -106,5 +120,30 @@ func TestDiffViewerUsesMutedGutterForegroundForChangedLines(t *testing.T) {
 	}
 	if deleteGutter.Background != viewer.scheme.DeleteLine {
 		t.Fatalf("delete gutter background = %v, want %v", deleteGutter.Background, viewer.scheme.DeleteLine)
+	}
+}
+
+func TestApplyInlineSpans(t *testing.T) {
+	base := vaxis.Style{
+		Foreground: vaxis.RGBColor(1, 2, 3),
+		Background: vaxis.RGBColor(4, 5, 6),
+	}
+	inlineBackground := vaxis.RGBColor(7, 8, 9)
+
+	segments := applyInlineSpans([]vaxis.Segment{
+		{Text: "foo ", Style: base},
+		{Text: "bar", Style: base},
+	}, []diff.InlineSpan{
+		{Start: 4, End: 7, Kind: diff.InlineChange},
+	}, inlineBackground)
+
+	if len(segments) != 2 {
+		t.Fatalf("segments = %+v, want 2 segments", segments)
+	}
+	if segments[0].Text != "foo " || segments[0].Style.Background != base.Background {
+		t.Fatalf("first segment = %+v", segments[0])
+	}
+	if segments[1].Text != "bar" || segments[1].Style.Background != inlineBackground {
+		t.Fatalf("second segment = %+v", segments[1])
 	}
 }

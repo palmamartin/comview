@@ -123,7 +123,9 @@ func (d *diffViewer) printRow(win vaxis.Window, row int, diffRow diff.Row) {
 			{Text: diffRow.Marker, Style: d.styleFor(diffRow.Kind)},
 		}
 		if diffRow.Code != "" {
-			segments = append(segments, d.highlighter.Highlight(diffRow.FileName, diffRow.Code, d.codeStyle(diffRow.Kind))...)
+			codeSegments := d.highlighter.Highlight(diffRow.FileName, diffRow.Code, d.codeStyle(diffRow.Kind))
+			codeSegments = applyInlineSpans(codeSegments, diffRow.InlineSpans, d.inlineBackground(diffRow.Kind))
+			segments = append(segments, codeSegments...)
 		}
 		printSegmentsAt(win, 0, row, segments...)
 		return
@@ -139,7 +141,9 @@ func (d *diffViewer) printRow(win vaxis.Window, row int, diffRow diff.Row) {
 		{Text: diffRow.Gutter, Style: d.styleFor(diff.RowMeta)},
 		{Text: diffRow.Marker, Style: style},
 	}
-	segments = append(segments, d.highlighter.Highlight(diffRow.FileName, diffRow.Code, d.codeStyle(diffRow.Kind))...)
+	codeSegments := d.highlighter.Highlight(diffRow.FileName, diffRow.Code, d.codeStyle(diffRow.Kind))
+	codeSegments = applyInlineSpans(codeSegments, diffRow.InlineSpans, d.inlineBackground(diffRow.Kind))
+	segments = append(segments, codeSegments...)
 	printSegmentsAt(win, 0, row, segments...)
 }
 
@@ -248,6 +252,17 @@ func (d *diffViewer) codeStyle(kind diff.RowKind) vaxis.Style {
 	return style
 }
 
+func (d *diffViewer) inlineBackground(kind diff.RowKind) vaxis.Color {
+	switch kind {
+	case diff.RowAdd:
+		return d.scheme.AddInline
+	case diff.RowDelete:
+		return d.scheme.DeleteInline
+	default:
+		return vaxis.ColorDefault
+	}
+}
+
 func (d *diffViewer) gutterStyle(kind diff.RowKind) vaxis.Style {
 	style := vaxis.Style{
 		Foreground: d.scheme.Muted,
@@ -277,4 +292,73 @@ func printSegmentsAt(win vaxis.Window, col int, row int, segments ...vaxis.Segme
 
 	line := win.New(col, row, -1, 1)
 	line.PrintTruncate(0, segments...)
+}
+
+func applyInlineSpans(segments []vaxis.Segment, spans []diff.InlineSpan, background vaxis.Color) []vaxis.Segment {
+	if len(segments) == 0 || len(spans) == 0 || background == vaxis.ColorDefault {
+		return segments
+	}
+
+	out := make([]vaxis.Segment, 0, len(segments)+len(spans)*2)
+	offset := 0
+	spanIndex := 0
+	for _, segment := range segments {
+		start := offset
+		end := offset + len(segment.Text)
+		offset = end
+
+		for spanIndex < len(spans) && spans[spanIndex].End <= start {
+			spanIndex++
+		}
+
+		position := start
+		for spanIndex < len(spans) && spans[spanIndex].Start < end {
+			span := spans[spanIndex]
+			if span.Start > position {
+				out = append(out, sliceSegment(segment, position-start, span.Start-start, false, background))
+			}
+
+			highlightStart := maxInt(position, span.Start)
+			highlightEnd := minInt(end, span.End)
+			if highlightStart < highlightEnd {
+				out = append(out, sliceSegment(segment, highlightStart-start, highlightEnd-start, true, background))
+			}
+			position = highlightEnd
+			if span.End <= end {
+				spanIndex++
+			} else {
+				break
+			}
+		}
+
+		if position < end {
+			out = append(out, sliceSegment(segment, position-start, end-start, false, background))
+		}
+	}
+	return out
+}
+
+func sliceSegment(segment vaxis.Segment, start int, end int, highlight bool, background vaxis.Color) vaxis.Segment {
+	style := segment.Style
+	if highlight {
+		style.Background = background
+	}
+	return vaxis.Segment{
+		Text:  segment.Text[start:end],
+		Style: style,
+	}
+}
+
+func minInt(a int, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+func maxInt(a int, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }

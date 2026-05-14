@@ -46,13 +46,26 @@ const (
 )
 
 type Row struct {
-	Kind     RowKind
-	Text     string
-	FileName string
-	Gutter   string
-	Marker   string
-	Code     string
+	Kind        RowKind
+	Text        string
+	FileName    string
+	Gutter      string
+	Marker      string
+	Code        string
+	InlineSpans []InlineSpan
 }
+
+type InlineSpan struct {
+	Start int
+	End   int
+	Kind  InlineKind
+}
+
+type InlineKind int
+
+const (
+	InlineChange InlineKind = iota
+)
 
 type RowKind int
 

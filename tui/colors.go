@@ -11,9 +11,11 @@ import (
 const colorQueryTimeout = 150 * time.Millisecond
 
 const (
-	changedLineBlend        = 0.08
+	changedLineBlend        = 0.05
 	minChangedLineContrast  = 1.18
-	maxChangedLineBlendStep = 0.28
+	maxChangedLineBlendStep = 0.22
+	inlineChangeBlend       = 0.32
+	minInlineChangeContrast = 1.70
 )
 
 type TerminalColors struct {
@@ -28,17 +30,19 @@ type TerminalColors struct {
 }
 
 type ColorScheme struct {
-	Foreground vaxis.Color
-	Background vaxis.Color
-	Header     vaxis.Color
-	Muted      vaxis.Color
-	Hunk       vaxis.Color
-	Blue       vaxis.Color
-	Yellow     vaxis.Color
-	Add        vaxis.Color
-	AddLine    vaxis.Color
-	Delete     vaxis.Color
-	DeleteLine vaxis.Color
+	Foreground   vaxis.Color
+	Background   vaxis.Color
+	Header       vaxis.Color
+	Muted        vaxis.Color
+	Hunk         vaxis.Color
+	Blue         vaxis.Color
+	Yellow       vaxis.Color
+	Add          vaxis.Color
+	AddLine      vaxis.Color
+	AddInline    vaxis.Color
+	Delete       vaxis.Color
+	DeleteLine   vaxis.Color
+	DeleteInline vaxis.Color
 }
 
 func DefaultColorScheme() ColorScheme {
@@ -88,6 +92,8 @@ func (s *ColorScheme) ApplyTerminalColors(colors TerminalColors) {
 func (s *ColorScheme) RecomputeDerivedColors() {
 	s.AddLine = changedLineBackground(s.Background, s.Add)
 	s.DeleteLine = changedLineBackground(s.Background, s.Delete)
+	s.AddInline = inlineChangeBackground(s.Background, s.Add)
+	s.DeleteInline = inlineChangeBackground(s.Background, s.Delete)
 }
 
 type TerminalColorReceiver interface {
@@ -147,6 +153,19 @@ func changedLineBackground(background vaxis.Color, accent vaxis.Color) vaxis.Col
 	for contrastRatio(background, color) < minChangedLineContrast && blend < maxChangedLineBlendStep {
 		blend += 0.04
 		color = blendRGB(background, accent, blend)
+	}
+	return color
+}
+
+func inlineChangeBackground(background vaxis.Color, accent vaxis.Color) vaxis.Color {
+	color := blendRGB(background, accent, inlineChangeBlend)
+	for contrastRatio(background, color) < minInlineChangeContrast {
+		color = blendRGB(background, accent, inlineChangeBlend+0.08)
+		if contrastRatio(background, color) >= minInlineChangeContrast {
+			break
+		}
+		color = blendRGB(background, accent, 0.50)
+		break
 	}
 	return color
 }

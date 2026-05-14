@@ -64,19 +64,53 @@ func (d Document) RowsWithOptions(options RenderOptions) []Row {
 			if options.ShowHunkHeaders {
 				rows = append(rows, Row{Kind: RowHunk, Text: hunk.Header, FileName: syntaxName})
 			}
-			for _, line := range hunk.Lines {
-				if line.Kind == Context && !options.ShowContext {
-					continue
-				}
-				if line.Kind == NoNewline && !options.ShowNoNewlineMarkers {
-					continue
-				}
-
-				rows = append(rows, renderRow(syntaxName, line, options))
-			}
+			rows = append(rows, renderHunkRows(syntaxName, hunk, options)...)
 		}
 	}
 
+	return rows
+}
+
+func renderHunkRows(fileName string, hunk Hunk, options RenderOptions) []Row {
+	rows := make([]Row, 0, len(hunk.Lines))
+	for i := 0; i < len(hunk.Lines); {
+		if hunk.Lines[i].Kind == Delete {
+			deleteStart := i
+			for i < len(hunk.Lines) && hunk.Lines[i].Kind == Delete {
+				i++
+			}
+			addStart := i
+			for i < len(hunk.Lines) && hunk.Lines[i].Kind == Add {
+				i++
+			}
+
+			deletes := hunk.Lines[deleteStart:addStart]
+			adds := hunk.Lines[addStart:i]
+			inlineDiffs := pairInlineDiffs(deletes, adds)
+
+			for idx, line := range deletes {
+				row := renderRow(fileName, line, options)
+				row.InlineSpans = inlineDiffs.deleteSpans[idx]
+				rows = append(rows, row)
+			}
+			for idx, line := range adds {
+				row := renderRow(fileName, line, options)
+				row.InlineSpans = inlineDiffs.addSpans[idx]
+				rows = append(rows, row)
+			}
+			continue
+		}
+
+		line := hunk.Lines[i]
+		i++
+		if line.Kind == Context && !options.ShowContext {
+			continue
+		}
+		if line.Kind == NoNewline && !options.ShowNoNewlineMarkers {
+			continue
+		}
+		rows = append(rows, renderRow(fileName, line, options))
+	}
 	return rows
 }
 
