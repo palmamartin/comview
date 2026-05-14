@@ -86,6 +86,9 @@ type diffViewer struct {
 	reviewFile    string
 	editor        *commentEditor
 	commandLine   string
+	searchQuery   string
+	searchMatches []searchMatch
+	searchIndex   int
 	statusMessage string
 	yankUntil     time.Time
 	mouseDrag     mouseDragState
@@ -98,6 +101,12 @@ type diffViewer struct {
 type selectionPoint struct {
 	Row int
 	Col int
+}
+
+type searchMatch struct {
+	Row   int
+	Start int
+	End   int
 }
 
 type textSelection struct {
@@ -132,6 +141,7 @@ const (
 	modeVisualLine
 	modeInsert
 	modeCommand
+	modeSearch
 )
 
 type clickState struct {
@@ -183,6 +193,9 @@ func (d *diffViewer) handleKey(key vaxis.Key) (Command, error) {
 	if d.mode == modeCommand {
 		return d.handleCommandKey(key), nil
 	}
+	if d.mode == modeSearch {
+		return d.handleSearchKey(key)
+	}
 	if d.mode == modeInsert && d.editor != nil {
 		return d.handleCommentKey(key), nil
 	}
@@ -190,9 +203,25 @@ func (d *diffViewer) handleKey(key vaxis.Key) (Command, error) {
 	d.keys.ClearExpired(time.Now())
 
 	switch {
+	case key.Matches('/'):
+		d.keys.Clear()
+		d.enterSearchMode()
+		return CommandRedraw, nil
 	case key.Matches(':'):
 		d.keys.Clear()
 		d.enterCommandMode()
+		return CommandRedraw, nil
+	case key.Matches('N'):
+		d.keys.Clear()
+		if !d.moveSearchMatch(-1) {
+			return CommandNone, nil
+		}
+		return CommandRedraw, nil
+	case key.Matches('n'):
+		d.keys.Clear()
+		if !d.moveSearchMatch(1) {
+			return CommandNone, nil
+		}
 		return CommandRedraw, nil
 	case key.Matches('c', vaxis.ModCtrl), key.Matches('q'):
 		d.keys.Clear()
@@ -201,6 +230,10 @@ func (d *diffViewer) handleKey(key vaxis.Key) (Command, error) {
 		if d.mode != modeNormal || d.selection.Active {
 			d.keys.Clear()
 			d.exitVisualMode()
+			return CommandRedraw, nil
+		}
+		if d.clearSearch() {
+			d.keys.Clear()
 			return CommandRedraw, nil
 		}
 		return CommandNone, nil
@@ -284,7 +317,7 @@ func (d *diffViewer) handleKey(key vaxis.Key) (Command, error) {
 }
 
 func (d *diffViewer) handleMouse(mouse vaxis.Mouse) (Command, error) {
-	if d.mode == modeInsert || d.mode == modeCommand {
+	if d.mode == modeInsert || d.mode == modeCommand || d.mode == modeSearch {
 		return CommandNone, nil
 	}
 
@@ -365,7 +398,7 @@ func (d *diffViewer) Paint(win vaxis.Window) {
 
 	for row, diffRow := range d.visibleRows() {
 		docRow := d.scroll + row
-		d.printRow(win, row, diffRow, d.codeSegments[docRow], docRow == d.cursor.Row)
+		d.printRow(win, row, docRow, diffRow, d.codeSegments[docRow], docRow == d.cursor.Row)
 		d.paintSelection(win, row, docRow)
 	}
 	d.paintStickyFileHeader(win)
@@ -383,7 +416,7 @@ func (d *diffViewer) paintStickyFileHeader(win vaxis.Window) {
 	}
 
 	d.clearScreenRow(win, 0, d.baseStyle())
-	d.printRow(win, 0, row, nil, false)
+	d.printRow(win, 0, -1, row, nil, false)
 }
 
 func (d *diffViewer) paintCursor(win vaxis.Window) {
@@ -512,6 +545,14 @@ func (d *diffViewer) paintStatusBar(win vaxis.Window) {
 		d.paintCommandCursor(win)
 		return
 	}
+	if d.mode == modeSearch {
+		printSegmentsAt(win, 0, row, vaxis.Segment{
+			Text:  "/" + d.searchQuery,
+			Style: d.baseStyle(),
+		})
+		d.paintSearchCursor(win)
+		return
+	}
 	printSegmentsAt(win, 0, row,
 		vaxis.Segment{
 			Text:  " " + d.modeLabel() + " ",
@@ -541,6 +582,17 @@ func (d *diffViewer) paintCommandCursor(win vaxis.Window) {
 	})
 }
 
+func (d *diffViewer) paintSearchCursor(win vaxis.Window) {
+	col, row, ok := d.searchCursorPosition(win)
+	if !ok {
+		return
+	}
+	win.SetCell(col, row, vaxis.Cell{
+		Character: vaxis.Character{Grapheme: " ", Width: 1},
+		Style:     d.reverseStyle(d.baseStyle()),
+	})
+}
+
 func (d *diffViewer) commandCursorPosition(win vaxis.Window) (int, int, bool) {
 	width, height := win.Size()
 	return d.commandCursorPositionForSize(width, height)
@@ -551,6 +603,18 @@ func (d *diffViewer) commandCursorPositionForSize(width int, height int) (int, i
 		return 0, 0, false
 	}
 	col := 1 + textCellWidth(d.commandLine)
+	if col >= width {
+		col = width - 1
+	}
+	return col, height - 1, true
+}
+
+func (d *diffViewer) searchCursorPosition(win vaxis.Window) (int, int, bool) {
+	width, height := win.Size()
+	if width <= 0 || height <= 0 || d.mode != modeSearch {
+		return 0, 0, false
+	}
+	col := 1 + textCellWidth(d.searchQuery)
 	if col >= width {
 		col = width - 1
 	}
@@ -708,6 +772,8 @@ func (d *diffViewer) modeLabel() string {
 		return "INSERT"
 	case modeCommand:
 		return "COMMAND"
+	case modeSearch:
+		return "SEARCH"
 	default:
 		return "NORMAL"
 	}
@@ -754,9 +820,9 @@ func (d *diffViewer) ensureFileRows() {
 	}
 }
 
-func (d *diffViewer) printRow(win vaxis.Window, row int, diffRow diff.Row, codeSegments []vaxis.Segment, cursorLine bool) {
+func (d *diffViewer) printRow(win vaxis.Window, row int, docRow int, diffRow diff.Row, codeSegments []vaxis.Segment, cursorLine bool) {
 	d.fillRowBackground(win, row, diffRow.Kind, cursorLine)
-	if diffRow.Prefix != "" && diffRow.Code != "" && d.printStructuredRow(win, row, diffRow, cursorLine) {
+	if diffRow.Prefix != "" && diffRow.Code != "" && d.printStructuredRow(win, row, docRow, diffRow, cursorLine) {
 		return
 	}
 
@@ -767,6 +833,7 @@ func (d *diffViewer) printRow(win vaxis.Window, row int, diffRow diff.Row, codeS
 		printSegmentsAt(win, 0, row, segments...)
 		if diffRow.Code != "" {
 			codeSegments = d.reviewSegments(diffRow, codeSegments)
+			codeSegments = d.searchSegments(docRow, diffRow, codeSegments)
 			printCodeSegmentsAtOffset(win, codeOffset, row, d.xScroll, d.rowSegments(codeSegments, cursorLine)...)
 		}
 		return
@@ -781,14 +848,16 @@ func (d *diffViewer) printRow(win vaxis.Window, row int, diffRow diff.Row, codeS
 	d.fillCodeBackground(win, row, 0, diffRow.Kind, cursorLine)
 	printSegmentsAt(win, 0, row, segments...)
 	codeSegments = d.reviewSegments(diffRow, codeSegments)
+	codeSegments = d.searchSegments(docRow, diffRow, codeSegments)
 	printCodeSegmentsAtOffset(win, 0, row, d.xScroll, d.rowSegments(codeSegments, cursorLine)...)
 }
 
-func (d *diffViewer) printStructuredRow(win vaxis.Window, row int, diffRow diff.Row, cursorLine bool) bool {
+func (d *diffViewer) printStructuredRow(win vaxis.Window, row int, docRow int, diffRow diff.Row, cursorLine bool) bool {
 	segments, ok := d.structuredSegments(diffRow)
 	if !ok {
 		return false
 	}
+	segments = d.searchSegments(docRow, diffRow, segments)
 	printSegmentsAt(win, 0, row, d.rowSegments(segments, cursorLine)...)
 	return true
 }
@@ -1613,6 +1682,59 @@ func (d *diffViewer) handleCommandKey(key vaxis.Key) Command {
 	return CommandNone
 }
 
+func (d *diffViewer) enterSearchMode() {
+	d.searchQuery = ""
+	d.searchMatches = nil
+	d.searchIndex = -1
+	d.statusMessage = ""
+	d.mode = modeSearch
+}
+
+func (d *diffViewer) clearSearch() bool {
+	if d.searchQuery == "" && len(d.searchMatches) == 0 && d.searchIndex == -1 {
+		return false
+	}
+	d.searchQuery = ""
+	d.searchMatches = nil
+	d.searchIndex = -1
+	return true
+}
+
+func (d *diffViewer) handleSearchKey(key vaxis.Key) (Command, error) {
+	switch {
+	case key.Matches(vaxis.KeyEsc), key.MatchString("Esc"):
+		d.mode = modeNormal
+		d.clearSearch()
+		return CommandRedraw, nil
+	case key.Matches(vaxis.KeyEnter):
+		d.updateSearchMatches()
+		d.mode = modeNormal
+		if len(d.searchMatches) == 0 {
+			d.statusMessage = "Pattern not found"
+			return CommandRedraw, nil
+		}
+		d.searchIndex = d.nextSearchIndexFromCursor(1)
+		d.applySearchMatch()
+		return CommandRedraw, nil
+	case key.Matches(vaxis.KeyBackspace), key.Matches('h', vaxis.ModCtrl):
+		if d.searchQuery != "" {
+			runes := []rune(d.searchQuery)
+			d.searchQuery = string(runes[:len(runes)-1])
+			d.updateSearchMatches()
+			return CommandRedraw, nil
+		}
+	case key.Text != "" && key.Modifiers&(vaxis.ModCtrl|vaxis.ModAlt|vaxis.ModSuper) == 0:
+		for _, r := range key.Text {
+			if r >= ' ' {
+				d.searchQuery += string(r)
+			}
+		}
+		d.updateSearchMatches()
+		return CommandRedraw, nil
+	}
+	return CommandNone, nil
+}
+
 func (d *diffViewer) executeCommand() Command {
 	command := strings.TrimSpace(d.commandLine)
 	d.commandLine = ""
@@ -1714,6 +1836,111 @@ func (d *diffViewer) findReviewDraft(target review.CommentDraft) (int, bool) {
 		}
 	}
 	return 0, false
+}
+
+func (d *diffViewer) updateSearchMatches() {
+	if d.searchQuery == "" {
+		d.searchMatches = nil
+		d.searchIndex = -1
+		return
+	}
+
+	query := strings.ToLower(d.searchQuery)
+	var matches []searchMatch
+	for rowIndex, row := range d.rows {
+		searchText, offset := d.searchableText(row)
+		text := strings.ToLower(searchText)
+		for start := 0; ; {
+			index := strings.Index(text[start:], query)
+			if index < 0 {
+				break
+			}
+			matchStart := start + index
+			matchEnd := matchStart + len(query)
+			matches = append(matches, searchMatch{
+				Row:   rowIndex,
+				Start: offset + textCellWidth(searchText[:matchStart]),
+				End:   offset + textCellWidth(searchText[:matchEnd]),
+			})
+			start = matchEnd
+		}
+	}
+	d.searchMatches = matches
+	d.searchIndex = -1
+}
+
+func (d *diffViewer) searchableText(row diff.Row) (string, int) {
+	if row.Code != "" && (row.Gutter != "" || row.Marker != "") {
+		return row.Code, d.codeOffset(row)
+	}
+	return row.Text, 0
+}
+
+func (d *diffViewer) moveSearchMatch(delta int) bool {
+	if len(d.searchMatches) == 0 {
+		return false
+	}
+	if d.searchIndex < 0 || d.searchIndex >= len(d.searchMatches) {
+		d.searchIndex = d.nextSearchIndexFromCursor(delta)
+	} else {
+		d.searchIndex = (d.searchIndex + delta + len(d.searchMatches)) % len(d.searchMatches)
+	}
+	d.applySearchMatch()
+	return true
+}
+
+func (d *diffViewer) nextSearchIndexFromCursor(direction int) int {
+	if len(d.searchMatches) == 0 {
+		return -1
+	}
+	if direction < 0 {
+		for index := len(d.searchMatches) - 1; index >= 0; index-- {
+			if selectionPointLess(selectionPoint{Row: d.searchMatches[index].Row, Col: d.searchMatches[index].Start}, d.cursor) {
+				return index
+			}
+		}
+		return len(d.searchMatches) - 1
+	}
+	for index, match := range d.searchMatches {
+		point := selectionPoint{Row: match.Row, Col: match.Start}
+		if selectionPointLess(d.cursor, point) || d.cursor == point {
+			return index
+		}
+	}
+	return 0
+}
+
+func (d *diffViewer) applySearchMatch() {
+	if d.searchIndex < 0 || d.searchIndex >= len(d.searchMatches) {
+		return
+	}
+	match := d.searchMatches[d.searchIndex]
+	d.setCursor(selectionPoint{Row: match.Row, Col: match.Start})
+	d.statusMessage = ""
+}
+
+func (d *diffViewer) searchSegments(rowIndex int, row diff.Row, segments []vaxis.Segment) []vaxis.Segment {
+	if len(d.searchMatches) == 0 || rowIndex < 0 {
+		return segments
+	}
+	style := vaxis.Style{
+		Foreground: d.scheme.Background,
+		Background: d.scheme.Yellow,
+	}
+	for _, match := range d.searchMatches {
+		if match.Row != rowIndex {
+			continue
+		}
+		start := match.Start
+		end := match.End
+		if row.Gutter != "" || row.Marker != "" {
+			offset := d.codeOffset(row)
+			start -= offset
+			end -= offset
+		}
+		segments = styleSegmentsRangeFull(segments, start, end, style)
+	}
+	return segments
 }
 
 func reviewDraftMatchesTarget(draft review.CommentDraft, target review.CommentDraft) bool {
@@ -2705,6 +2932,42 @@ func styleSegmentsRange(segments []vaxis.Segment, start int, end int, style vaxi
 			if next > start && col < end {
 				charStyle.UnderlineColor = style.UnderlineColor
 				charStyle.UnderlineStyle = style.UnderlineStyle
+			}
+			styled = appendSegment(styled, vaxis.Segment{
+				Text:  char.Grapheme,
+				Style: charStyle,
+			})
+			col = next
+		}
+	}
+	return styled
+}
+
+func styleSegmentsRangeFull(segments []vaxis.Segment, start int, end int, style vaxis.Style) []vaxis.Segment {
+	if start >= end {
+		return segments
+	}
+
+	var styled []vaxis.Segment
+	col := 0
+	for _, segment := range segments {
+		for _, char := range vaxis.Characters(segment.Text) {
+			next := col + char.Width
+			charStyle := segment.Style
+			if next > start && col < end {
+				if style.Foreground != vaxis.ColorDefault {
+					charStyle.Foreground = style.Foreground
+				}
+				if style.Background != vaxis.ColorDefault {
+					charStyle.Background = style.Background
+				}
+				if style.UnderlineColor != vaxis.ColorDefault {
+					charStyle.UnderlineColor = style.UnderlineColor
+				}
+				if style.UnderlineStyle != vaxis.UnderlineOff {
+					charStyle.UnderlineStyle = style.UnderlineStyle
+				}
+				charStyle.Attribute |= style.Attribute
 			}
 			styled = appendSegment(styled, vaxis.Segment{
 				Text:  char.Grapheme,

@@ -447,6 +447,10 @@ func TestDiffViewerModeLabels(t *testing.T) {
 	if got := viewer.modeLabel(); got != "COMMAND" {
 		t.Fatalf("mode label = %q, want COMMAND", got)
 	}
+	viewer.mode = modeSearch
+	if got := viewer.modeLabel(); got != "SEARCH" {
+		t.Fatalf("mode label = %q, want SEARCH", got)
+	}
 }
 
 func TestDiffViewerStatusColorsFollowMode(t *testing.T) {
@@ -1056,6 +1060,122 @@ func TestDiffViewerCommandCursorUsesStatusBar(t *testing.T) {
 	}
 	if col != 2 || row != 9 {
 		t.Fatalf("command cursor = %d,%d, want 2,9", col, row)
+	}
+}
+
+func TestDiffViewerSlashSearchMovesToMatch(t *testing.T) {
+	rows := []diff.Row{
+		{Kind: diff.RowContext, Gutter: "1 1   ", Code: "alpha"},
+		{Kind: diff.RowContext, Gutter: "2 2   ", Code: "needle"},
+	}
+	for i := range rows {
+		rows[i].Text = rows[i].Gutter + rows[i].Code
+	}
+	viewer := &diffViewer{rows: rows}
+	viewer.Layout(Tight(Size{Width: 80, Height: 10}))
+
+	cmd, err := viewer.HandleEvent(vaxis.Key{Text: "/", Keycode: '/'})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cmd != CommandRedraw || viewer.mode != modeSearch {
+		t.Fatalf("slash command = %v mode=%v, want redraw search", cmd, viewer.mode)
+	}
+	if cmd, err = viewer.HandleEvent(vaxis.Key{Text: "needle"}); err != nil {
+		t.Fatal(err)
+	} else if cmd != CommandRedraw {
+		t.Fatalf("query command = %v, want redraw", cmd)
+	}
+	if cmd, err = viewer.HandleEvent(vaxis.Key{Keycode: vaxis.KeyEnter}); err != nil {
+		t.Fatal(err)
+	} else if cmd != CommandRedraw {
+		t.Fatalf("enter command = %v, want redraw", cmd)
+	}
+
+	if viewer.mode != modeNormal {
+		t.Fatalf("mode = %v, want normal", viewer.mode)
+	}
+	if got, want := viewer.cursor.Row, 1; got != want {
+		t.Fatalf("cursor row = %d, want %d", got, want)
+	}
+	if got, want := viewer.cursor.Col, testCodeOffset(rows[1]); got != want {
+		t.Fatalf("cursor col = %d, want %d", got, want)
+	}
+}
+
+func TestDiffViewerSearchNextPrevious(t *testing.T) {
+	viewer := &diffViewer{
+		rows: []diff.Row{
+			{Kind: diff.RowContext, Text: "one needle"},
+			{Kind: diff.RowContext, Text: "two needle"},
+		},
+		searchQuery: "needle",
+	}
+	viewer.Layout(Tight(Size{Width: 80, Height: 10}))
+	viewer.updateSearchMatches()
+
+	if !viewer.moveSearchMatch(1) {
+		t.Fatal("next search failed")
+	}
+	if got, want := viewer.cursor.Row, 0; got != want {
+		t.Fatalf("cursor row = %d, want %d", got, want)
+	}
+	if !viewer.moveSearchMatch(1) {
+		t.Fatal("second next search failed")
+	}
+	if got, want := viewer.cursor.Row, 1; got != want {
+		t.Fatalf("cursor row = %d, want %d", got, want)
+	}
+	if !viewer.moveSearchMatch(-1) {
+		t.Fatal("previous search failed")
+	}
+	if got, want := viewer.cursor.Row, 0; got != want {
+		t.Fatalf("cursor row = %d, want %d", got, want)
+	}
+}
+
+func TestDiffViewerEscapeClearsSearch(t *testing.T) {
+	viewer := &diffViewer{
+		rows: []diff.Row{{Kind: diff.RowContext, Text: "needle"}},
+	}
+	viewer.Layout(Tight(Size{Width: 80, Height: 10}))
+	viewer.searchQuery = "needle"
+	viewer.updateSearchMatches()
+	viewer.searchIndex = 0
+
+	cmd, err := viewer.HandleEvent(vaxis.Key{Keycode: vaxis.KeyEsc})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cmd != CommandRedraw {
+		t.Fatalf("command = %v, want redraw", cmd)
+	}
+	if viewer.searchQuery != "" || len(viewer.searchMatches) != 0 || viewer.searchIndex != -1 {
+		t.Fatalf("search state = query:%q matches:%+v index:%d", viewer.searchQuery, viewer.searchMatches, viewer.searchIndex)
+	}
+}
+
+func TestDiffViewerSearchSegmentsHighlightMatches(t *testing.T) {
+	viewer := &diffViewer{
+		rows: []diff.Row{{Kind: diff.RowContext, Text: "one needle"}},
+		searchMatches: []searchMatch{{
+			Row:   0,
+			Start: 4,
+			End:   10,
+		}},
+	}
+	viewer.ensureColorScheme()
+
+	segments := viewer.searchSegments(0, viewer.rows[0], []vaxis.Segment{{Text: "one needle", Style: viewer.baseStyle()}})
+
+	if len(segments) != 2 {
+		t.Fatalf("segments = %+v, want 2", segments)
+	}
+	if got, want := segments[1].Text, "needle"; got != want {
+		t.Fatalf("highlight text = %q, want %q", got, want)
+	}
+	if segments[1].Style.Background != viewer.scheme.Yellow {
+		t.Fatalf("highlight style = %+v", segments[1].Style)
 	}
 }
 
