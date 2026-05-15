@@ -1289,7 +1289,7 @@ func TestDiffViewerInsertReopensExistingComment(t *testing.T) {
 	}
 }
 
-func TestDiffViewerDDeletesCommentAtCursor(t *testing.T) {
+func TestDiffViewerXDeletesNoteAtCursor(t *testing.T) {
 	viewer := &diffViewer{
 		rows: []diff.Row{{
 			Kind:   diff.RowAdd,
@@ -1306,7 +1306,7 @@ func TestDiffViewerDDeletesCommentAtCursor(t *testing.T) {
 	}
 	viewer.Layout(Tight(Size{Width: 80, Height: 10}))
 
-	cmd, err := viewer.HandleEvent(vaxis.Key{Text: "D", Keycode: 'D'})
+	cmd, err := viewer.HandleEvent(vaxis.Key{Text: "x", Keycode: 'x'})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1320,12 +1320,47 @@ func TestDiffViewerDDeletesCommentAtCursor(t *testing.T) {
 	if !viewer.reviewDirty {
 		t.Fatal("review not dirty after delete")
 	}
-	if got, want := viewer.statusMessage, "Comment deleted."; got != want {
+	if got, want := viewer.statusMessage, "Note deleted."; got != want {
 		t.Fatalf("status message = %q, want %q", got, want)
 	}
 }
 
-func TestDiffViewerDDeletesCommentForSelection(t *testing.T) {
+func TestDiffViewerDDDeletesNoteAtCursor(t *testing.T) {
+	viewer := &diffViewer{
+		rows: []diff.Row{{
+			Kind:   diff.RowAdd,
+			Text:   "hello",
+			Code:   "hello",
+			Review: review.Anchor{Path: "main.go", Line: 12, Side: review.SideRight},
+		}},
+		reviewDrafts: []review.CommentDraft{{
+			Path: "main.go",
+			Line: 12,
+			Side: review.SideRight,
+			Body: "comment",
+		}},
+	}
+	viewer.Layout(Tight(Size{Width: 80, Height: 10}))
+
+	if cmd, err := viewer.HandleEvent(vaxis.Key{Text: "d", Keycode: 'd'}); err != nil {
+		t.Fatal(err)
+	} else if cmd != CommandNone {
+		t.Fatalf("first d command = %v, want none", cmd)
+	}
+	cmd, err := viewer.HandleEvent(vaxis.Key{Text: "d", Keycode: 'd'})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if cmd != CommandRedraw {
+		t.Fatalf("command = %v, want redraw", cmd)
+	}
+	if len(viewer.reviewDrafts) != 0 {
+		t.Fatalf("drafts = %+v, want none", viewer.reviewDrafts)
+	}
+}
+
+func TestDiffViewerXDeletesNoteOverlappingSelection(t *testing.T) {
 	viewer := &diffViewer{
 		rows: []diff.Row{{
 			Kind:   diff.RowAdd,
@@ -1344,13 +1379,13 @@ func TestDiffViewerDDeletesCommentForSelection(t *testing.T) {
 		mode: modeVisual,
 		selection: textSelection{
 			Active: true,
-			Anchor: selectionPoint{Row: 0, Col: 1},
-			Cursor: selectionPoint{Row: 0, Col: 3},
+			Anchor: selectionPoint{Row: 0, Col: 0},
+			Cursor: selectionPoint{Row: 0, Col: 0},
 		},
 	}
 	viewer.Layout(Tight(Size{Width: 80, Height: 10}))
 
-	cmd, err := viewer.HandleEvent(vaxis.Key{Text: "D", Keycode: 'D'})
+	cmd, err := viewer.HandleEvent(vaxis.Key{Text: "x", Keycode: 'x'})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1366,7 +1401,7 @@ func TestDiffViewerDDeletesCommentForSelection(t *testing.T) {
 	}
 }
 
-func TestDiffViewerDDoesNothingWithoutComment(t *testing.T) {
+func TestDiffViewerXShowsMessageWithoutNote(t *testing.T) {
 	viewer := &diffViewer{
 		rows: []diff.Row{{
 			Kind:   diff.RowAdd,
@@ -1377,16 +1412,19 @@ func TestDiffViewerDDoesNothingWithoutComment(t *testing.T) {
 	}
 	viewer.Layout(Tight(Size{Width: 80, Height: 10}))
 
-	cmd, err := viewer.HandleEvent(vaxis.Key{Text: "D", Keycode: 'D'})
+	cmd, err := viewer.HandleEvent(vaxis.Key{Text: "x", Keycode: 'x'})
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	if cmd != CommandNone {
-		t.Fatalf("command = %v, want none", cmd)
+	if cmd != CommandRedraw {
+		t.Fatalf("command = %v, want redraw", cmd)
 	}
 	if viewer.reviewDirty {
 		t.Fatal("review dirty after no-op delete")
+	}
+	if got, want := viewer.statusMessage, "No note."; got != want {
+		t.Fatalf("status message = %q, want %q", got, want)
 	}
 }
 
@@ -2976,7 +3014,8 @@ func TestDiffViewerTextObjectIgnoresShiftModifierPress(t *testing.T) {
 	if cmd != CommandRedraw {
 		t.Fatalf("command = %v, want redraw", cmd)
 	}
-	if got, want := viewer.ClipboardText(), `            Text:  " " + d.modeLabel() + " ",
+	if got, want := viewer.ClipboardText(), `
+            Text:  " " + d.modeLabel() + " ",
             Style: d.statusStyle(),
         `; got != want {
 		t.Fatalf("selection text = %q, want %q", got, want)
@@ -3006,7 +3045,8 @@ func TestDiffViewerTextObjectUsesShiftedPunctuationFallback(t *testing.T) {
 	if cmd != CommandRedraw {
 		t.Fatalf("command = %v, want redraw", cmd)
 	}
-	if got, want := viewer.ClipboardText(), `            Text:  " " + d.modeLabel() + " ",
+	if got, want := viewer.ClipboardText(), `
+            Text:  " " + d.modeLabel() + " ",
             Style: d.statusStyle(),
         `; got != want {
 		t.Fatalf("selection text = %q, want %q", got, want)
@@ -3037,6 +3077,52 @@ func TestDiffViewerTextObjectSelectsNextMultilineObject(t *testing.T) {
 	}
 	if got, want := viewer.ClipboardText(), "{\n\tcall()\n}"; got != want {
 		t.Fatalf("selection text = %q, want %q", got, want)
+	}
+}
+
+func TestDiffViewerInnerTextObjectHighlightsBoundaryNewlines(t *testing.T) {
+	rows := []diff.Row{
+		{Kind: diff.RowContext, Text: "foo{", Code: "foo{"},
+		{Kind: diff.RowContext, Text: "  foo,", Code: "  foo,"},
+		{Kind: diff.RowContext, Text: "}", Code: "}"},
+	}
+	viewer := &diffViewer{
+		rows:   rows,
+		cursor: selectionPoint{Row: 1, Col: 0},
+		mode:   modeVisual,
+	}
+	viewer.Layout(Tight(Size{Width: 80, Height: 10}))
+
+	if _, err := viewer.HandleEvent(vaxis.Key{Text: "i", Keycode: 'i'}); err != nil {
+		t.Fatal(err)
+	}
+	cmd, err := viewer.HandleEvent(vaxis.Key{Text: "{", Keycode: '['})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cmd != CommandRedraw {
+		t.Fatalf("command = %v, want redraw", cmd)
+	}
+	if got, want := viewer.ClipboardText(), "\n  foo,\n"; got != want {
+		t.Fatalf("selection text = %q, want %q", got, want)
+	}
+
+	openingSpec, ok := viewer.selectionPaintSpec(0, time.Now())
+	if !ok {
+		t.Fatal("opening row selection paint spec missing")
+	}
+	if got, want := openingSpec.startCol, textCellWidth(rows[0].Code); got != want {
+		t.Fatalf("opening selection paint start = %d, want %d", got, want)
+	}
+	if got, want := openingSpec.endCol, textCellWidth(rows[0].Code)+1; got != want {
+		t.Fatalf("opening selection paint end = %d, want %d", got, want)
+	}
+	contentSpec, ok := viewer.selectionPaintSpec(1, time.Now())
+	if !ok {
+		t.Fatal("content row selection paint spec missing")
+	}
+	if got, want := contentSpec.endCol, textCellWidth(rows[1].Code)+1; got != want {
+		t.Fatalf("content selection paint end = %d, want %d", got, want)
 	}
 }
 

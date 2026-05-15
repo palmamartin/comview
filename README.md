@@ -44,7 +44,7 @@ Comments are saved to `.comview/comments.json`.
 | `iw`, `aw`, `i{`, `a"`, etc. | Text objects, naturally flawless |
 | `y` | Copy selection |
 | `i` or `I` | Add/edit comment |
-| `D` | Delete comment draft |
+| `x` / `dd` | Delete note under cursor |
 | `:w` | Save comments |
 | `:q` / `:q!` | Quit / force quit |
 | `Esc` | Cancel |

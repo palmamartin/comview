@@ -112,12 +112,14 @@ type searchMatch struct {
 }
 
 type textSelection struct {
-	Active       bool
-	Dragging     bool
-	Anchor       selectionPoint
-	Cursor       selectionPoint
-	SideFiltered bool
-	Side         diffSide
+	Active              bool
+	Dragging            bool
+	Anchor              selectionPoint
+	Cursor              selectionPoint
+	SideFiltered          bool
+	Side                  diffSide
+	IncludeInitialNewline bool
+	IncludeFinalNewline   bool
 }
 
 type commentEditor struct {
@@ -343,12 +345,9 @@ func (d *diffViewer) handleKey(key vaxis.Key) (Command, error) {
 			return CommandNone, nil
 		}
 		return CommandRedraw, nil
-	case key.Matches('D'):
+	case key.Matches('x'):
 		d.keys.Clear()
-		if !d.deleteReviewDraftAtTarget() {
-			return CommandNone, nil
-		}
-		return CommandRedraw, nil
+		return d.deleteReviewDraftCommand(), nil
 	case key.Matches(vaxis.KeyHome):
 		d.keys.Clear()
 		d.cursorTop()
@@ -357,6 +356,13 @@ func (d *diffViewer) handleKey(key vaxis.Key) (Command, error) {
 		d.keys.Clear()
 		d.moveCursorRows(d.halfPage())
 		return CommandRedraw, nil
+	case key.Matches('d'):
+		if d.keys.Pending() == "d" {
+			d.keys.Clear()
+			return d.deleteReviewDraftCommand(), nil
+		}
+		d.keys.Set("d", time.Now())
+		return CommandNone, nil
 	case key.Matches('u', vaxis.ModCtrl), key.Matches(vaxis.KeyPgUp):
 		d.keys.Clear()
 		d.moveCursorRows(-d.halfPage())
@@ -2244,6 +2250,8 @@ func (d *diffViewer) selectWordTextObject(kind textObjectKind) bool {
 	return d.applyTextObjectSelection(
 		selectionPoint{Row: d.cursor.Row, Col: start},
 		selectionPoint{Row: d.cursor.Row, Col: maxInt(start, end-1)},
+		false,
+		false,
 	)
 }
 
@@ -2282,25 +2290,37 @@ func (d *diffViewer) selectDelimitedTextObject(kind textObjectKind, open rune, c
 
 	start := openPos
 	end := closePos
+	includeInitialNewline := false
+	includeFinalNewline := false
 	if kind == textObjectInner {
 		start = advanceTextObjectPosition(bounds, openPos)
 		end = previousTextObjectPosition(bounds, closePos)
+		includeInitialNewline = openPos.Row != closePos.Row && start.Row > openPos.Row
+		includeFinalNewline = openPos.Row != closePos.Row && end.Row < closePos.Row
 	}
 	if textObjectPositionLess(end, start) {
 		return false
 	}
 
+	anchor := selectionPoint{Row: start.Row, Col: bounds.CodeStart[start.Row] + start.Col}
+	if includeInitialNewline {
+		anchor = selectionPoint{Row: openPos.Row, Col: bounds.CodeStart[openPos.Row] + bounds.CodeWidth[openPos.Row]}
+	}
 	return d.applyTextObjectSelection(
-		selectionPoint{Row: start.Row, Col: bounds.CodeStart[start.Row] + start.Col},
+		anchor,
 		selectionPoint{Row: end.Row, Col: bounds.CodeStart[end.Row] + end.Col},
+		includeInitialNewline,
+		includeFinalNewline,
 	)
 }
 
-func (d *diffViewer) applyTextObjectSelection(anchor selectionPoint, cursor selectionPoint) bool {
+func (d *diffViewer) applyTextObjectSelection(anchor selectionPoint, cursor selectionPoint, includeInitialNewline bool, includeFinalNewline bool) bool {
 	d.selection = textSelection{
-		Active: true,
-		Anchor: anchor,
-		Cursor: cursor,
+		Active:                true,
+		Anchor:                anchor,
+		Cursor:                cursor,
+		IncludeInitialNewline: includeInitialNewline,
+		IncludeFinalNewline:   includeFinalNewline,
 	}
 	if anchor.Row != cursor.Row && d.cursor.Row >= 0 && d.cursor.Row < len(d.rows) {
 		d.selection.SideFiltered = true
@@ -2661,6 +2681,12 @@ func (d *diffViewer) selectionPaintSpec(docRow int, now time.Time) (selectionPai
 	if !ok {
 		return selectionPaintSpec{}, false
 	}
+	if selection.IncludeFinalNewline && docRow == end.Row {
+		_, rowEnd, ok := d.codeRange(d.rows[docRow])
+		if ok && endCol == rowEnd {
+			endCol++
+		}
+	}
 	return selectionPaintSpec{
 		row:      d.rows[docRow],
 		startCol: startCol,
@@ -2800,6 +2826,10 @@ func (d *diffViewer) selectionText() string {
 		if !ok {
 			continue
 		}
+		if d.selection.IncludeInitialNewline && rowIndex == start.Row {
+			wroteRow = true
+			continue
+		}
 		if d.mode != modeVisualLine {
 			if rowIndex == start.Row {
 				rowStart = maxInt(rowStart, start.Col)
@@ -2825,6 +2855,9 @@ func (d *diffViewer) selectionText() string {
 		}
 		text.WriteString(rowText)
 		wroteRow = true
+	}
+	if d.selection.IncludeFinalNewline && wroteRow {
+		text.WriteByte('\n')
 	}
 	return text.String()
 }
@@ -3098,20 +3131,68 @@ func (d *diffViewer) submitReviewComment() bool {
 	return true
 }
 
-func (d *diffViewer) deleteReviewDraftAtTarget() bool {
-	draft, ok := d.reviewDraftTarget()
-	if !ok {
-		return false
+func (d *diffViewer) deleteReviewDraftCommand() Command {
+	if !d.deleteReviewDraftAtTarget() {
+		d.statusMessage = "No note."
+		return CommandRedraw
 	}
-	index, ok := d.findReviewDraft(draft)
+	return CommandRedraw
+}
+
+func (d *diffViewer) deleteReviewDraftAtTarget() bool {
+	index, ok := d.findReviewDraftAtTarget()
 	if !ok {
 		return false
 	}
 	d.reviewDrafts = append(d.reviewDrafts[:index], d.reviewDrafts[index+1:]...)
 	d.reviewDirty = true
-	d.statusMessage = "Comment deleted."
+	d.statusMessage = "Note deleted."
 	d.exitVisualMode()
 	return true
+}
+
+func (d *diffViewer) findReviewDraftAtTarget() (int, bool) {
+	if d.selection.Active {
+		return d.findReviewDraftOverlappingSelection()
+	}
+	if d.cursor.Row < 0 || d.cursor.Row >= len(d.rows) {
+		return 0, false
+	}
+	return d.findReviewDraftContainingAnchor(d.rows[d.cursor.Row].Review)
+}
+
+func (d *diffViewer) findReviewDraftOverlappingSelection() (int, bool) {
+	start, end, ok := d.selectionRange()
+	if !ok {
+		return 0, false
+	}
+	if start.Row < 0 {
+		start.Row = 0
+	}
+	if end.Row >= len(d.rows) {
+		end.Row = len(d.rows) - 1
+	}
+	for row := start.Row; row <= end.Row; row++ {
+		if !selectionIncludesRow(d.selection, d.rows[row]) {
+			continue
+		}
+		if index, ok := d.findReviewDraftContainingAnchor(d.rows[row].Review); ok {
+			return index, true
+		}
+	}
+	return 0, false
+}
+
+func (d *diffViewer) findReviewDraftContainingAnchor(anchor review.Anchor) (int, bool) {
+	if !reviewAnchorValid(anchor) {
+		return 0, false
+	}
+	for index, draft := range d.reviewDrafts {
+		if reviewDraftContains(draft, anchor) {
+			return index, true
+		}
+	}
+	return 0, false
 }
 
 func (d *diffViewer) findReviewDraft(target review.CommentDraft) (int, bool) {
