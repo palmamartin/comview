@@ -220,6 +220,7 @@ var helpKeybinds = []helpKeybind{
 	{Key: "s", READMEKey: "`s`", Action: "Toggle side-by-side view"},
 	{Key: "/", READMEKey: "`/`", Action: "Search"},
 	{Key: "n / N", READMEKey: "`n` / `N`", Action: "Next / previous search result"},
+	{Key: "o", READMEKey: "`o`", Action: "Open cursor location in editor"},
 	{Key: "v / V", READMEKey: "`v` / `V`", Action: "Visual / visual-line selection"},
 	{Key: "iw, aw, i{, a\", etc.", READMEKey: "`iw`, `aw`, `i{`, `a\"`, etc.", Action: "Text objects, naturally flawless"},
 	{Key: "y", READMEKey: "`y`", Action: "Copy selection"},
@@ -253,6 +254,34 @@ func (d *diffViewer) YankHighlightDuration() time.Duration {
 
 func (d *diffViewer) ClipboardConsumed() {
 	d.clipboardText = ""
+}
+
+func (d *diffViewer) SetStatusMessage(message string) {
+	d.setStatusMessage(message)
+}
+
+func (d *diffViewer) EditorTarget() (EditorTarget, bool) {
+	if d.cursor.Row < 0 || d.cursor.Row >= len(d.rows) {
+		d.setStatusMessage("No file.")
+		return EditorTarget{}, false
+	}
+
+	row := d.rows[d.cursor.Row]
+	if row.FileName == "" {
+		d.setStatusMessage("No file.")
+		return EditorTarget{}, false
+	}
+
+	line := row.Review.Line
+	if line <= 0 {
+		line = 1
+	}
+
+	column := 1
+	if row.Code != "" {
+		column = maxInt(1, d.cursor.Col-d.codeOffset(row)+1)
+	}
+	return EditorTarget{Path: row.FileName, Line: line, Column: column}, true
 }
 
 func (d *diffViewer) HandleEvent(ev vaxis.Event) (Command, error) {
@@ -344,6 +373,12 @@ func (d *diffViewer) handleKey(key vaxis.Key) (Command, error) {
 			return CommandNone, nil
 		}
 		return CommandRedraw, nil
+	case key.Matches('o'):
+		d.keys.Clear()
+		if _, ok := d.EditorTarget(); !ok {
+			return CommandRedraw, nil
+		}
+		return CommandOpenEditor, nil
 	case key.Matches('c', vaxis.ModCtrl), key.Matches('q'):
 		d.keys.Clear()
 		return CommandNone, nil

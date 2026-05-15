@@ -56,6 +56,74 @@ func TestRowsForInputReturnsRowsForDiff(t *testing.T) {
 	}
 }
 
+func TestDiffViewerEditorTargetUsesCursorRow(t *testing.T) {
+	rows, err := rowsForInput(`diff --git a/main.go b/main.go
+--- a/main.go
++++ b/main.go
+@@ -10,2 +10,2 @@
+ old context
+-old
++new
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	viewer := &diffViewer{
+		rows:   rows,
+		cursor: selectionPoint{Row: 3, Col: testCodeOffset(rows[3]) + 2},
+	}
+
+	target, ok := viewer.EditorTarget()
+	if !ok {
+		t.Fatal("editor target not found")
+	}
+	if target.Path != "main.go" || target.Line != 11 || target.Column != 3 {
+		t.Fatalf("target = %+v, want main.go:11:3", target)
+	}
+}
+
+func TestDiffViewerEditorTargetFallsBackToLineOne(t *testing.T) {
+	viewer := &diffViewer{
+		rows: []diff.Row{{Kind: diff.RowFile, Text: "main.go", FileName: "main.go"}},
+	}
+
+	target, ok := viewer.EditorTarget()
+	if !ok {
+		t.Fatal("editor target not found")
+	}
+	if target.Path != "main.go" || target.Line != 1 || target.Column != 1 {
+		t.Fatalf("target = %+v, want main.go:1:1", target)
+	}
+}
+
+func TestDiffViewerEditorTargetReportsMissingFile(t *testing.T) {
+	viewer := &diffViewer{
+		rows: []diff.Row{{Kind: diff.RowBlank}},
+	}
+
+	_, ok := viewer.EditorTarget()
+	if ok {
+		t.Fatal("editor target found for row without file")
+	}
+	if got, want := viewer.statusMessage, "No file."; got != want {
+		t.Fatalf("status = %q, want %q", got, want)
+	}
+}
+
+func TestDiffViewerOOpensEditor(t *testing.T) {
+	viewer := &diffViewer{
+		rows: []diff.Row{{Kind: diff.RowAdd, FileName: "main.go", Review: review.Anchor{Line: 12}}},
+	}
+
+	cmd, err := viewer.HandleEvent(vaxis.Key{Text: "o", Keycode: 'o'})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cmd != CommandOpenEditor {
+		t.Fatalf("command = %v, want %v", cmd, CommandOpenEditor)
+	}
+}
+
 func TestDiffViewerFallsBackToRGBDiffColors(t *testing.T) {
 	viewer := &diffViewer{}
 	viewer.ensureColorScheme()
@@ -626,7 +694,7 @@ func TestDiffViewerHelpOverlayMatchesReadmeKeybinds(t *testing.T) {
 
 func TestDiffViewerHelpOverlayHasRoomForKeybinds(t *testing.T) {
 	viewer := &diffViewer{}
-	width, height := viewer.helpOverlaySize(80, 23)
+	width, height := viewer.helpOverlaySize(80, len(helpKeybinds)+4)
 	if width <= 0 || height < len(helpKeybinds)+4 {
 		t.Fatalf("help overlay size = %dx%d, want room for %d bindings", width, height, len(helpKeybinds))
 	}

@@ -1,7 +1,13 @@
 package tui
 
 import (
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
 	"time"
+	"unicode"
 
 	"git.sr.ht/~rockorager/vaxis"
 )
@@ -72,6 +78,7 @@ const (
 	CommandRedraw
 	CommandQuit
 	CommandCopy
+	CommandOpenEditor
 )
 
 type Widget interface {
@@ -86,6 +93,20 @@ type ClipboardProvider interface {
 
 type ClipboardConsumer interface {
 	ClipboardConsumed()
+}
+
+type EditorTarget struct {
+	Path   string
+	Line   int
+	Column int
+}
+
+type EditorTargetProvider interface {
+	EditorTarget() (EditorTarget, bool)
+}
+
+type StatusMessenger interface {
+	SetStatusMessage(string)
 }
 
 type YankHighlighter interface {
@@ -198,6 +219,16 @@ func (a *App) handleEvent(ev vaxis.Event) (Command, error) {
 		}
 		requestFrame = true
 	}
+	if cmd == CommandOpenEditor {
+		requestFrame = true
+		if err := a.openEditor(); err != nil {
+			if messenger, ok := a.root.(StatusMessenger); ok {
+				messenger.SetStatusMessage(fmt.Sprintf("Could not open editor: %v", err))
+			} else {
+				return CommandNone, err
+			}
+		}
+	}
 	if cmd == CommandRedraw {
 		requestFrame = true
 	}
@@ -206,6 +237,155 @@ func (a *App) handleEvent(ev vaxis.Event) (Command, error) {
 		a.scheduleTimedRedraw()
 	}
 	return cmd, nil
+}
+
+func (a *App) openEditor() error {
+	provider, ok := a.root.(EditorTargetProvider)
+	if !ok {
+		return nil
+	}
+	target, ok := provider.EditorTarget()
+	if !ok {
+		return nil
+	}
+	if target.Path == "" {
+		return nil
+	}
+
+	if err := a.vx.Suspend(); err != nil {
+		return err
+	}
+	runErr := runEditor(target)
+	resumeErr := a.vx.Resume()
+	a.applyTerminalColors()
+	if runErr != nil {
+		return runErr
+	}
+	return resumeErr
+}
+
+func runEditor(target EditorTarget) error {
+	editor := configuredEditor()
+	name, args, err := editorCommand(editor, target)
+	if err != nil {
+		return err
+	}
+
+	tty, err := os.OpenFile("/dev/tty", os.O_RDWR, 0)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tty.Close() }()
+
+	cmd := exec.Command(name, args...)
+	cmd.Stdin = tty
+	cmd.Stdout = tty
+	cmd.Stderr = tty
+	return cmd.Run()
+}
+
+func configuredEditor() string {
+	if editor := strings.TrimSpace(os.Getenv("GIT_EDITOR")); editor != "" {
+		return editor
+	}
+	if editor, ok := gitEditor(); ok {
+		return editor
+	}
+	if editor := strings.TrimSpace(os.Getenv("VISUAL")); editor != "" {
+		return editor
+	}
+	return strings.TrimSpace(os.Getenv("EDITOR"))
+}
+
+func gitEditor() (string, bool) {
+	output, err := exec.Command("git", "var", "GIT_EDITOR").Output()
+	if err != nil {
+		return "", false
+	}
+	editor := strings.TrimSpace(string(output))
+	return editor, editor != ""
+}
+
+func editorCommand(editor string, target EditorTarget) (string, []string, error) {
+	if strings.TrimSpace(editor) == "" {
+		editor = "vi"
+	}
+	parts, err := splitCommandLine(editor)
+	if err != nil {
+		return "", nil, err
+	}
+	if len(parts) == 0 {
+		parts = []string{"vi"}
+	}
+
+	line := target.Line
+	if line <= 0 {
+		line = 1
+	}
+	column := target.Column
+	if column <= 0 {
+		column = 1
+	}
+	name := parts[0]
+	args := append([]string{}, parts[1:]...)
+	switch filepath.Base(name) {
+	case "vi", "vim", "nvim", "view", "nano", "emacs", "emacsclient":
+		args = append(args, fmt.Sprintf("+call cursor(%d,%d)", line, column), target.Path)
+	case "code", "code-insiders", "codium", "vscodium":
+		args = append(args, "-g", fmt.Sprintf("%s:%d:%d", target.Path, line, column))
+	default:
+		args = append(args, target.Path)
+	}
+	return name, args, nil
+}
+
+func splitCommandLine(command string) ([]string, error) {
+	var fields []string
+	var current strings.Builder
+	quote := rune(0)
+	escaped := false
+	haveField := false
+
+	for _, r := range command {
+		switch {
+		case escaped:
+			current.WriteRune(r)
+			escaped = false
+			haveField = true
+		case r == '\\' && quote != '\'':
+			escaped = true
+			haveField = true
+		case quote != 0:
+			if r == quote {
+				quote = 0
+			} else {
+				current.WriteRune(r)
+			}
+			haveField = true
+		case r == '\'' || r == '"':
+			quote = r
+			haveField = true
+		case unicode.IsSpace(r):
+			if haveField {
+				fields = append(fields, current.String())
+				current.Reset()
+				haveField = false
+			}
+		default:
+			current.WriteRune(r)
+			haveField = true
+		}
+	}
+	if escaped {
+		current.WriteRune('\\')
+	}
+	if quote != 0 {
+		return nil, fmt.Errorf("unterminated quote in editor command")
+	}
+	if haveField {
+		fields = append(fields, current.String())
+	}
+	return fields, nil
 }
 
 func (a *App) scheduleTimedRedraw() {

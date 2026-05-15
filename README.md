@@ -42,6 +42,7 @@ Comments are saved to `.comview/comments.json`.
 | `s` | Toggle side-by-side view |
 | `/` | Search |
 | `n` / `N` | Next / previous search result |
+| `o` | Open cursor location in editor |
 | `v` / `V` | Visual / visual-line selection |
 | `iw`, `aw`, `i{`, `a"`, etc. | Text objects, naturally flawless |
 | `y` | Copy selection |
