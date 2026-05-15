@@ -113,6 +113,36 @@ func TestColorSchemeDimIsBlendedRGB(t *testing.T) {
 	}
 }
 
+func TestColorSchemeGutterShadesWithBackgroundPolarity(t *testing.T) {
+	dark := NewColorScheme(BaseColors{
+		Foreground: vaxis.RGBColor(0xd7, 0xde, 0xe9),
+		Background: vaxis.RGBColor(0x10, 0x14, 0x19),
+		Red:        vaxis.RGBColor(0xaa, 0x00, 0x00),
+		Green:      vaxis.RGBColor(0x00, 0xaa, 0x00),
+		Yellow:     vaxis.RGBColor(0xaa, 0xaa, 0x00),
+		Blue:       vaxis.RGBColor(0x00, 0x00, 0xaa),
+		Magenta:    vaxis.RGBColor(0xaa, 0x00, 0xaa),
+		Cyan:       vaxis.RGBColor(0x00, 0xaa, 0xaa),
+	})
+	if got, want := dark.Gutter, blendRGB(dark.Background, trueBlack(), gutterBackgroundBlend); got != want {
+		t.Fatalf("dark gutter = %v, want black shade %v", got, want)
+	}
+
+	light := NewColorScheme(BaseColors{
+		Foreground: vaxis.RGBColor(0x44, 0x3f, 0x38),
+		Background: vaxis.RGBColor(0xf8, 0xf4, 0xec),
+		Red:        vaxis.RGBColor(0xaa, 0x00, 0x00),
+		Green:      vaxis.RGBColor(0x00, 0xaa, 0x00),
+		Yellow:     vaxis.RGBColor(0xaa, 0xaa, 0x00),
+		Blue:       vaxis.RGBColor(0x00, 0x00, 0xaa),
+		Magenta:    vaxis.RGBColor(0xaa, 0x00, 0xaa),
+		Cyan:       vaxis.RGBColor(0x00, 0xaa, 0xaa),
+	})
+	if got, want := light.Gutter, blendRGB(light.Background, trueWhite(), gutterBackgroundBlend); got != want {
+		t.Fatalf("light gutter = %v, want white shade %v", got, want)
+	}
+}
+
 func TestChangedLineBackgroundsAreBlendedAndContrasting(t *testing.T) {
 	scheme := DefaultColorScheme()
 

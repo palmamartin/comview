@@ -21,7 +21,7 @@ const (
 	selectionBlend          = 0.40
 	yankHighlightBlend      = 0.50
 	cursorLineBlend         = 0.10
-	gutterBackgroundBlend   = 0.35
+	gutterBackgroundBlend   = 0.16
 )
 
 type TerminalColors struct {
@@ -139,11 +139,26 @@ func (s *ColorScheme) RecomputeDerivedColors() {
 	s.DeleteInline = inlineChangeBackground(s.Background, s.Delete)
 	s.Selection = blendRGB(s.Background, s.Blue, selectionBlend)
 	s.Yank = blendRGB(s.Background, s.Yellow, yankHighlightBlend)
-	s.Gutter = blendRGB(s.Background, trueBlack(), gutterBackgroundBlend)
+	s.Gutter = blendRGB(s.Background, gutterShadeTarget(s.Background), gutterBackgroundBlend)
+}
+
+func gutterShadeTarget(background vaxis.Color) vaxis.Color {
+	if isLightColor(background) {
+		return trueWhite()
+	}
+	return trueBlack()
+}
+
+func isLightColor(color vaxis.Color) bool {
+	return relativeLuminance(color) >= 0.5
 }
 
 func trueBlack() vaxis.Color {
 	return vaxis.RGBColor(0, 0, 0)
+}
+
+func trueWhite() vaxis.Color {
+	return vaxis.RGBColor(0xff, 0xff, 0xff)
 }
 
 type TerminalColorReceiver interface {
