@@ -124,6 +124,173 @@ func TestDiffViewerOOpensEditor(t *testing.T) {
 	}
 }
 
+func TestDiffViewerSpaceEOpensFileFinder(t *testing.T) {
+	rows, err := rowsForInput(`diff --git a/first.go b/first.go
+--- a/first.go
++++ b/first.go
+@@ -1 +1 @@
+-old
++new
+diff --git a/second.go b/second.go
+--- a/second.go
++++ b/second.go
+@@ -1 +1 @@
+-old
++new
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	viewer := &diffViewer{rows: rows, height: 4}
+
+	cmd, err := viewer.HandleEvent(vaxis.Key{Text: " ", Keycode: vaxis.KeySpace})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cmd != CommandNone || viewer.keys.Pending() != " " {
+		t.Fatalf("space command/pending = %v/%q, want none/space", cmd, viewer.keys.Pending())
+	}
+
+	cmd, err = viewer.HandleEvent(vaxis.Key{Text: "e", Keycode: 'e'})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cmd != CommandRedraw || viewer.mode != modeFuzzy || viewer.finder == nil {
+		t.Fatalf("command/mode/finder = %v/%v/%v, want redraw/fuzzy/finder", cmd, viewer.mode, viewer.finder)
+	}
+	if len(viewer.finder.Items) != 2 {
+		t.Fatalf("finder items = %+v, want 2 files", viewer.finder.Items)
+	}
+}
+
+func TestDiffViewerFileFinderJumpsToSelectedFile(t *testing.T) {
+	rows, err := rowsForInput(`diff --git a/first.go b/first.go
+--- a/first.go
++++ b/first.go
+@@ -1 +1 @@
+-old
++new
+diff --git a/second.go b/second.go
+--- a/second.go
++++ b/second.go
+@@ -1 +1 @@
+-old
++new
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	viewer := &diffViewer{rows: rows}
+	if cmd := viewer.openFileFinderCommand(); cmd != CommandRedraw {
+		t.Fatalf("open command = %v, want redraw", cmd)
+	}
+	viewer.finder.SetQuery("second")
+
+	cmd := viewer.handleFuzzyKey(vaxis.Key{Keycode: vaxis.KeyEnter})
+	if cmd != CommandRedraw {
+		t.Fatalf("enter command = %v, want redraw", cmd)
+	}
+	if viewer.mode != modeNormal || viewer.finder != nil {
+		t.Fatalf("mode/finder = %v/%v, want normal/nil", viewer.mode, viewer.finder)
+	}
+	if viewer.rows[viewer.cursor.Row].Text != "second.go" {
+		t.Fatalf("cursor row = %+v, want second.go file row", viewer.rows[viewer.cursor.Row])
+	}
+	if viewer.scroll != viewer.cursor.Row {
+		t.Fatalf("scroll = %d, want cursor row %d", viewer.scroll, viewer.cursor.Row)
+	}
+}
+
+func TestDiffViewerFileFinderLayoutDoesNotShrinkWithMatches(t *testing.T) {
+	rows, err := rowsForInput(`diff --git a/first.go b/first.go
+--- a/first.go
++++ b/first.go
+@@ -1 +1 @@
+-old
++new
+diff --git a/second.go b/second.go
+--- a/second.go
++++ b/second.go
+@@ -1 +1 @@
+-old
++new
+diff --git a/third.go b/third.go
+--- a/third.go
++++ b/third.go
+@@ -1 +1 @@
+-old
++new
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	viewer := &diffViewer{rows: rows}
+	viewer.openFileFinderCommand()
+
+	before, ok := viewer.fuzzyFinderLayout(80, 24)
+	if !ok {
+		t.Fatal("finder layout missing")
+	}
+	viewer.finder.SetQuery("third")
+	after, ok := viewer.fuzzyFinderLayout(80, 24)
+	if !ok {
+		t.Fatal("filtered finder layout missing")
+	}
+	if after.boxHeight != before.boxHeight || after.y != before.y || after.visibleRows != before.visibleRows {
+		t.Fatalf("layout changed from %+v to %+v", before, after)
+	}
+}
+
+func TestFuzzyFinderRowWidthsKeepStatsVisible(t *testing.T) {
+	labelWidth, detailWidth, showDetail := fuzzyFinderRowWidths(20, "+117 -42")
+	if !showDetail {
+		t.Fatal("show detail = false, want true")
+	}
+	if detailWidth < textCellWidth("+117 -42") {
+		t.Fatalf("detail width = %d, want room for +117 -42", detailWidth)
+	}
+	if labelWidth != 10 {
+		t.Fatalf("label width = %d, want 10", labelWidth)
+	}
+}
+
+func TestPrintSegmentsHardClippedDoesNotEllipsizeExactFit(t *testing.T) {
+	cells := testCells{}
+
+	paintSegmentsHardClipped(cells, 0, 0, textCellWidth("+117 -42"), vaxis.Segment{Text: "+117 -42"})
+
+	if got, want := cells.text(textCellWidth("+117 -42")), "+117 -42"; got != want {
+		t.Fatalf("text = %q, want %q", got, want)
+	}
+}
+
+func TestPrintSegmentsHardClippedTruncatesRightWithoutEllipsis(t *testing.T) {
+	cells := testCells{}
+
+	paintSegmentsHardClipped(cells, 0, 0, 6, vaxis.Segment{Text: "README.md"})
+
+	if got, want := cells.text(6), "README"; got != want {
+		t.Fatalf("text = %q, want %q", got, want)
+	}
+}
+
+func TestDiffViewerFuzzyDetailSegmentsColorStats(t *testing.T) {
+	viewer := &diffViewer{}
+	viewer.ensureColorScheme()
+
+	segments := viewer.fuzzyDetailSegments("+117 -42", 9, viewer.scheme.Background)
+
+	if len(segments) != 4 {
+		t.Fatalf("segments = %+v, want padding/add/space/delete", segments)
+	}
+	if segments[1].Text != "+117" || segments[1].Style.Foreground != viewer.scheme.Add {
+		t.Fatalf("add segment = %+v", segments[1])
+	}
+	if segments[3].Text != "-42" || segments[3].Style.Foreground != viewer.scheme.Delete {
+		t.Fatalf("delete segment = %+v", segments[3])
+	}
+}
+
 func TestDiffViewerFallsBackToRGBDiffColors(t *testing.T) {
 	viewer := &diffViewer{}
 	viewer.ensureColorScheme()

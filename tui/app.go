@@ -91,6 +91,7 @@ type diffViewer struct {
 	searchQuery        string
 	searchMatches      []searchMatch
 	searchIndex        int
+	finder             *fuzzyFinder
 	statusMessage      string
 	statusMessageUntil time.Time
 	yankUntil          time.Time
@@ -169,6 +170,7 @@ const (
 	modeInsert
 	modeCommand
 	modeSearch
+	modeFuzzy
 )
 
 type diffLayoutMode int
@@ -218,6 +220,7 @@ var helpKeybinds = []helpKeybind{
 	{Key: "]c / [c", READMEKey: "`]c` / `[c`", Action: "Next / previous change"},
 	{Key: "]n / [n", READMEKey: "`]n` / `[n`", Action: "Next / previous note"},
 	{Key: "s", READMEKey: "`s`", Action: "Toggle side-by-side view"},
+	{Key: "Space e", READMEKey: "`<space>e`", Action: "Find file in diff"},
 	{Key: "/", READMEKey: "`/`", Action: "Search"},
 	{Key: "n / N", READMEKey: "`n` / `N`", Action: "Next / previous search result"},
 	{Key: "o", READMEKey: "`o`", Action: "Open cursor location in editor"},
@@ -309,6 +312,9 @@ func (d *diffViewer) handleKey(key vaxis.Key) (Command, error) {
 	if d.mode == modeSearch {
 		return d.handleSearchKey(key)
 	}
+	if d.mode == modeFuzzy && d.finder != nil {
+		return d.handleFuzzyKey(key), nil
+	}
 	if d.mode == modeInsert && d.editor != nil {
 		return d.handleCommentKey(key), nil
 	}
@@ -337,6 +343,9 @@ func (d *diffViewer) handleKey(key vaxis.Key) (Command, error) {
 	case key.Matches(']'):
 		d.keys.Set("]", time.Now())
 		return CommandNone, nil
+	case key.Matches(vaxis.KeySpace):
+		d.keys.Set(" ", time.Now())
+		return CommandNone, nil
 	case key.Matches('c') && d.keys.Pending() == "]":
 		d.keys.Clear()
 		return d.jumpChangeCommand(1), nil
@@ -349,6 +358,9 @@ func (d *diffViewer) handleKey(key vaxis.Key) (Command, error) {
 	case key.Matches('n') && d.keys.Pending() == "[":
 		d.keys.Clear()
 		return d.jumpNoteCommand(-1), nil
+	case key.Matches('e') && d.keys.Pending() == " ":
+		d.keys.Clear()
+		return d.openFileFinderCommand(), nil
 	case key.Matches('/'):
 		d.keys.Clear()
 		d.enterSearchMode()
@@ -524,7 +536,7 @@ func (d *diffViewer) handleKey(key vaxis.Key) (Command, error) {
 }
 
 func (d *diffViewer) handleMouse(mouse vaxis.Mouse) (Command, error) {
-	if d.mode == modeInsert || d.mode == modeCommand || d.mode == modeSearch {
+	if d.mode == modeInsert || d.mode == modeCommand || d.mode == modeSearch || d.mode == modeFuzzy {
 		return CommandNone, nil
 	}
 
@@ -595,6 +607,101 @@ func (d *diffViewer) handleTextObjectKey(key vaxis.Key) (Command, error) {
 		return CommandNone, nil
 	}
 	return CommandRedraw, nil
+}
+
+func (d *diffViewer) openFileFinderCommand() Command {
+	items := d.fileFinderItems()
+	if len(items) == 0 {
+		d.setStatusMessage("No file.")
+		return CommandRedraw
+	}
+	d.finder = newFuzzyFinder("Files", items)
+	d.mode = modeFuzzy
+	d.clearStatusMessage()
+	return CommandRedraw
+}
+
+func (d *diffViewer) fileFinderItems() []fuzzyItem {
+	items := make([]fuzzyItem, 0)
+	for rowIndex, row := range d.rows {
+		if row.Kind != diff.RowFile {
+			continue
+		}
+		stats := d.fileStatsFromRow(rowIndex)
+		detail := stats.String()
+		items = append(items, fuzzyItem{
+			Label:  row.Text,
+			Detail: detail,
+			Row:    rowIndex,
+		})
+	}
+	return items
+}
+
+func (d *diffViewer) fileStatsFromRow(fileRow int) statusStats {
+	if fileRow < 0 || fileRow >= len(d.rows) || d.rows[fileRow].Kind != diff.RowFile {
+		return statusStats{}
+	}
+	fileEnd := len(d.rows)
+	for rowIndex := fileRow + 1; rowIndex < len(d.rows); rowIndex++ {
+		switch d.rows[rowIndex].Kind {
+		case diff.RowFile, diff.RowCommitHeader:
+			fileEnd = rowIndex
+		}
+		if fileEnd == rowIndex {
+			break
+		}
+	}
+	return rowsStats(d.rows[fileRow:fileEnd])
+}
+
+func (d *diffViewer) handleFuzzyKey(key vaxis.Key) Command {
+	switch {
+	case key.Matches(vaxis.KeyEsc), key.MatchString("Esc"):
+		d.closeFuzzyFinder()
+		return CommandRedraw
+	case key.Matches(vaxis.KeyEnter):
+		return d.acceptFuzzyFinder()
+	case key.Matches(vaxis.KeyBackspace), key.Matches('h', vaxis.ModCtrl):
+		if d.finder.Backspace() {
+			return CommandRedraw
+		}
+	case key.Matches(vaxis.KeyDown), key.Matches('n', vaxis.ModCtrl), key.Matches('j', vaxis.ModCtrl):
+		d.finder.Move(1)
+		return CommandRedraw
+	case key.Matches(vaxis.KeyUp), key.Matches('p', vaxis.ModCtrl), key.Matches('k', vaxis.ModCtrl):
+		d.finder.Move(-1)
+		return CommandRedraw
+	case key.Matches('u', vaxis.ModCtrl):
+		d.finder.SetQuery("")
+		return CommandRedraw
+	case key.Text != "" && key.Modifiers&(vaxis.ModCtrl|vaxis.ModAlt|vaxis.ModSuper) == 0:
+		for _, r := range key.Text {
+			if r >= ' ' {
+				d.finder.Insert(string(r))
+			}
+		}
+		return CommandRedraw
+	}
+	return CommandNone
+}
+
+func (d *diffViewer) acceptFuzzyFinder() Command {
+	item, ok := d.finder.Selected()
+	if !ok {
+		return CommandNone
+	}
+	d.closeFuzzyFinder()
+	d.setCursor(selectionPoint{Row: item.Row})
+	d.scroll = item.Row
+	d.clampScroll()
+	d.ensureCursorVisible()
+	return CommandRedraw
+}
+
+func (d *diffViewer) closeFuzzyFinder() {
+	d.finder = nil
+	d.mode = modeNormal
 }
 
 func keyQuestionMark(key vaxis.Key) bool {
@@ -721,6 +828,7 @@ func (d *diffViewer) Paint(win vaxis.Window) {
 	d.paintScrollbar(win)
 	d.paintHorizontalScrollbar(win)
 	d.paintCommentEditor(win)
+	d.paintFuzzyFinder(win)
 	d.paintHelpOverlay(win)
 	d.paintStatusBar(win)
 }
@@ -742,7 +850,7 @@ func (d *diffViewer) paintCursor(win vaxis.Window) {
 	if win.Vx != nil {
 		win.Vx.HideCursor()
 	}
-	if d.helpVisible || d.mode == modeCommand || d.mode == modeInsert {
+	if d.helpVisible || d.mode == modeCommand || d.mode == modeInsert || d.mode == modeFuzzy {
 		return
 	}
 
@@ -1297,6 +1405,189 @@ func helpKeybindWidth() int {
 	return width
 }
 
+func (d *diffViewer) paintFuzzyFinder(win vaxis.Window) {
+	if d.finder == nil {
+		return
+	}
+	width, height := win.Size()
+	layout, ok := d.fuzzyFinderLayout(width, height)
+	if !ok {
+		return
+	}
+	matches := d.finder.Matches()
+	d.finder.EnsureCursorVisible(layout.visibleRows)
+
+	style := vaxis.Style{
+		Foreground: d.scheme.Foreground,
+		Background: blendRGB(d.scheme.Background, d.scheme.Foreground, 0.08),
+	}
+	borderStyle := style
+	borderStyle.Foreground = d.scheme.Muted
+	d.paintCommentBorder(win, layout.x, layout.y, layout.boxWidth, layout.boxHeight, borderStyle)
+	d.fillBox(win, layout.x+1, layout.y+1, layout.boxWidth-2, layout.boxHeight-2, style)
+
+	titleStyle := style
+	titleStyle.Foreground = d.scheme.Yellow
+	titleStyle.Attribute = vaxis.AttrBold
+	printSegmentsClipped(win, layout.x+2, layout.y+1, layout.boxWidth-4,
+		vaxis.Segment{Text: d.finder.Title, Style: titleStyle},
+		vaxis.Segment{Text: fmt.Sprintf("  %d/%d", len(matches), len(d.finder.Items)), Style: borderStyle},
+	)
+	printSegmentsClipped(win, layout.x+2, layout.y+2, layout.boxWidth-4,
+		vaxis.Segment{Text: "> ", Style: borderStyle},
+		vaxis.Segment{Text: d.finder.Query, Style: style},
+	)
+
+	for row := 0; row < layout.visibleRows; row++ {
+		matchIndex := d.finder.Scroll + row
+		if matchIndex >= len(matches) {
+			break
+		}
+		match := matches[matchIndex]
+		rowStyle := style
+		detailStyle := borderStyle
+		if matchIndex == d.finder.Cursor {
+			rowStyle.Background = d.scheme.Selection
+			detailStyle.Background = d.scheme.Selection
+		}
+		screenRow := layout.y + 4 + row
+		d.paintFuzzyFinderRow(win, layout, screenRow, match.Item, rowStyle, detailStyle.Background)
+	}
+	d.paintFuzzyCursor(win, layout)
+}
+
+func (d *diffViewer) paintFuzzyFinderRow(win vaxis.Window, layout fuzzyFinderLayout, screenRow int, item fuzzyItem, labelStyle vaxis.Style, detailBackground vaxis.Color) {
+	innerX := layout.x + 2
+	innerWidth := layout.boxWidth - 4
+	if innerWidth <= 0 {
+		return
+	}
+	d.fillBox(win, innerX, screenRow, innerWidth, 1, labelStyle)
+
+	labelX := innerX
+	detail := item.Detail
+	labelWidth, detailWidth, showDetail := fuzzyFinderRowWidths(innerWidth, detail)
+	if showDetail {
+		printSegmentsHardClipped(win, innerX+innerWidth-detailWidth, screenRow, detailWidth, d.fuzzyDetailSegments(detail, detailWidth, detailBackground)...)
+	}
+	printSegmentsHardClipped(win, labelX, screenRow, labelWidth, vaxis.Segment{Text: item.Label, Style: labelStyle})
+}
+
+func (d *diffViewer) fuzzyDetailSegments(detail string, width int, background vaxis.Color) []vaxis.Segment {
+	padding := width - textCellWidth(detail)
+	if padding < 0 {
+		padding = 0
+	}
+	baseStyle := vaxis.Style{
+		Foreground: d.scheme.Muted,
+		Background: background,
+	}
+	addStyle := baseStyle
+	addStyle.Foreground = d.scheme.Add
+	deleteStyle := baseStyle
+	deleteStyle.Foreground = d.scheme.Delete
+
+	segments := make([]vaxis.Segment, 0, 4)
+	if padding > 0 {
+		segments = append(segments, vaxis.Segment{Text: strings.Repeat(" ", padding), Style: baseStyle})
+	}
+	adds, deletes, ok := strings.Cut(detail, " ")
+	if !ok {
+		return append(segments, vaxis.Segment{Text: detail, Style: baseStyle})
+	}
+	segments = append(segments,
+		vaxis.Segment{Text: adds, Style: addStyle},
+		vaxis.Segment{Text: " ", Style: baseStyle},
+		vaxis.Segment{Text: deletes, Style: deleteStyle},
+	)
+	return segments
+}
+
+func fuzzyFinderRowWidths(innerWidth int, detail string) (labelWidth int, detailWidth int, showDetail bool) {
+	labelWidth = innerWidth
+	if detail == "" || labelWidth < 1 {
+		return labelWidth, 0, false
+	}
+	minDetailWidth := textCellWidth("+000 -000")
+	detailWidth = maxInt(textCellWidth(detail), minDetailWidth)
+	if labelWidth-detailWidth-1 < 8 {
+		return labelWidth, 0, false
+	}
+	return labelWidth - detailWidth - 1, detailWidth, true
+}
+
+type fuzzyFinderLayout struct {
+	x           int
+	y           int
+	boxWidth    int
+	boxHeight   int
+	visibleRows int
+}
+
+func (d *diffViewer) fuzzyFinderLayout(width int, height int) (fuzzyFinderLayout, bool) {
+	if d.finder == nil || width < 12 || height < 7 {
+		return fuzzyFinderLayout{}, false
+	}
+	contentHeight := height - 1
+	boxWidth := width - 4
+	if boxWidth > 72 {
+		boxWidth = 72
+	}
+	if boxWidth < 12 {
+		return fuzzyFinderLayout{}, false
+	}
+	maxRows := contentHeight - 6
+	if maxRows < 1 {
+		return fuzzyFinderLayout{}, false
+	}
+	visibleRows := len(d.finder.Items)
+	if visibleRows < 1 {
+		visibleRows = 1
+	}
+	if visibleRows > 10 {
+		visibleRows = 10
+	}
+	if visibleRows > maxRows {
+		visibleRows = maxRows
+	}
+	boxHeight := visibleRows + 5
+	x := (width - boxWidth) / 2
+	y := (contentHeight - boxHeight) / 3
+	if y < 0 {
+		y = 0
+	}
+	return fuzzyFinderLayout{
+		x:           x,
+		y:           y,
+		boxWidth:    boxWidth,
+		boxHeight:   boxHeight,
+		visibleRows: visibleRows,
+	}, true
+}
+
+func (d *diffViewer) paintFuzzyCursor(win vaxis.Window, layout fuzzyFinderLayout) {
+	if win.Vx == nil {
+		return
+	}
+	col := layout.x + 4 + textCellWidth(d.finder.Query)
+	maxCol := layout.x + layout.boxWidth - 3
+	if col > maxCol {
+		col = maxCol
+	}
+	win.ShowCursor(col, layout.y+2, vaxis.CursorBeam)
+}
+
+func (d *diffViewer) fillBox(win vaxis.Window, x int, y int, width int, height int, style vaxis.Style) {
+	for row := y; row < y+height; row++ {
+		for col := x; col < x+width; col++ {
+			win.SetCell(col, row, vaxis.Cell{
+				Character: vaxis.Character{Grapheme: " ", Width: 1},
+				Style:     style,
+			})
+		}
+	}
+}
+
 func (d *diffViewer) paintCommentEditor(win vaxis.Window) {
 	if d.editor == nil {
 		return
@@ -1544,6 +1835,8 @@ func (d *diffViewer) statusColor() vaxis.Color {
 		return d.scheme.Base.Magenta
 	case modeInsert:
 		return d.scheme.Base.Green
+	case modeFuzzy:
+		return d.scheme.Base.Yellow
 	default:
 		return d.scheme.Base.Blue
 	}
@@ -1561,6 +1854,8 @@ func (d *diffViewer) modeLabel() string {
 		return "COMMAND"
 	case modeSearch:
 		return "SEARCH"
+	case modeFuzzy:
+		return "FIND"
 	default:
 		return "NORMAL"
 	}
@@ -4873,6 +5168,21 @@ func printSegmentsClipped(win vaxis.Window, col int, row int, width int, segment
 	}
 	line := win.New(col, row, width, 1)
 	line.PrintTruncate(0, segments...)
+}
+
+func printSegmentsHardClipped(win vaxis.Window, col int, row int, width int, segments ...vaxis.Segment) {
+	winWidth, height := win.Size()
+	if width <= 0 || col >= winWidth || row >= height {
+		return
+	}
+	if col+width > winWidth {
+		width = winWidth - col
+	}
+	paintSegmentsHardClipped(win, col, row, width, segments...)
+}
+
+func paintSegmentsHardClipped(dst cellSetter, col int, row int, width int, segments ...vaxis.Segment) {
+	paintSegmentsOffset(dst, col+width, row, col, 0, segments...)
 }
 
 func segmentsWidth(segments []vaxis.Segment) int {
