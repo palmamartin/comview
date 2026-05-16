@@ -20,6 +20,7 @@ const multiClickTimeout = 500 * time.Millisecond
 const yankHighlightDuration = 180 * time.Millisecond
 const statusMessageTimeout = 2 * time.Second
 const mouseWheelScrollLines = 1
+const mouseWheelScrollColumns = 1
 const scrollbarWidth = 1
 const commentEditorMaxRows = 8
 const verticalScrollbarThumb = "█"
@@ -29,6 +30,11 @@ const keyboardFlags = vaxis.CSIuDisambiguate |
 	vaxis.CSIuAlternateKeys |
 	vaxis.CSIuAllKeys |
 	vaxis.CSIuAssociatedText
+
+const (
+	mouseWheelLeft  vaxis.MouseButton = 66
+	mouseWheelRight vaxis.MouseButton = 67
+)
 
 // Run starts the comview TUI.
 func Run(input string) error {
@@ -558,6 +564,14 @@ func (d *diffViewer) handleMouse(mouse vaxis.Mouse) (Command, error) {
 		d.scrollBy(-mouseWheelScrollLines)
 		d.extendSelectionAfterScroll(mouse)
 		return CommandRedraw, nil
+	case mouseWheelLeft:
+		d.keys.Clear()
+		d.scrollHorizontallyBy(-mouseWheelScrollColumns)
+		return CommandRedraw, nil
+	case mouseWheelRight:
+		d.keys.Clear()
+		d.scrollHorizontallyBy(mouseWheelScrollColumns)
+		return CommandRedraw, nil
 	case vaxis.MouseLeftButton:
 		switch mouse.EventType {
 		case vaxis.EventPress:
@@ -797,7 +811,7 @@ func (d *diffViewer) Layout(constraints Constraints) Size {
 	d.clampCursor()
 	d.clampScroll()
 	d.clampHorizontalScroll()
-	d.ensureCursorVisible()
+	d.ensureCursorRowVisible()
 	return size
 }
 
@@ -899,11 +913,32 @@ func (d *diffViewer) cursorScreenPositionForSize(width int, height int) (int, in
 		return 0, 0, false
 	}
 
+	verticalVisible, _ := d.scrollbarVisibility(width, height)
+	viewportWidth := horizontalViewportWidth(width, verticalVisible)
+	if viewportWidth <= 0 || !d.cursorColumnInViewport(d.rows[d.cursor.Row], viewportWidth) {
+		return 0, 0, false
+	}
 	screenCol := d.screenColumn(d.rows[d.cursor.Row], d.cursor.Col)
-	if screenCol < 0 || screenCol >= width {
+	if screenCol < 0 || screenCol >= viewportWidth {
 		return 0, 0, false
 	}
 	return screenCol, screenRow, true
+}
+
+func (d *diffViewer) cursorColumnInViewport(row diff.Row, viewportWidth int) bool {
+	if row.Code == "" || row.Kind == diff.RowHunk {
+		return d.cursor.Col >= 0 && d.cursor.Col < viewportWidth
+	}
+	codeOffset := d.codeOffset(row)
+	if d.cursor.Col < codeOffset {
+		return d.cursor.Col >= 0 && d.cursor.Col < codeOffset
+	}
+	codeViewportWidth := viewportWidth - codeOffset
+	if codeViewportWidth <= 0 {
+		return false
+	}
+	codeCol := d.cursor.Col - codeOffset
+	return codeCol >= d.xScroll && codeCol < d.xScroll+codeViewportWidth
 }
 
 func (d *diffViewer) codeOffset(row diff.Row) int {
@@ -1792,6 +1827,9 @@ func (d *diffViewer) paintCommentEditorScrollbar(win vaxis.Window, layout commen
 }
 
 func (d *diffViewer) paintCommentCursor(win vaxis.Window, layout commentEditorLayout) {
+	if d.mode != modeInsert {
+		return
+	}
 	visualRow, col, ok := d.editor.cursorDisplayPosition(layout.inputWidth)
 	if !ok {
 		return
@@ -4458,7 +4496,7 @@ func (d *diffViewer) moveCursorRows(delta int) {
 	d.cursor.Row += delta
 	d.clampCursor()
 	d.cursor.Col = d.clampCursorCol(d.cursor.Row, d.cursorGoal)
-	d.ensureCursorVisible()
+	d.ensureCursorRowVisible()
 	d.updateVisualSelection()
 }
 
@@ -4473,7 +4511,7 @@ func (d *diffViewer) moveSideBySideCursorRows(delta int) {
 		d.cursor.Row += delta
 		d.clampCursor()
 		d.cursor.Col = d.clampCursorCol(d.cursor.Row, d.cursorGoal)
-		d.ensureCursorVisible()
+		d.ensureCursorRowVisible()
 		d.updateVisualSelection()
 		return
 	}
@@ -4494,7 +4532,7 @@ func (d *diffViewer) moveSideBySideCursorRows(delta int) {
 	d.cursor.Row = row
 	d.clampCursor()
 	d.cursor.Col = d.clampCursorCol(d.cursor.Row, d.cursorGoal)
-	d.ensureCursorVisible()
+	d.ensureCursorRowVisible()
 	d.updateVisualSelection()
 }
 
@@ -4535,7 +4573,7 @@ func (d *diffViewer) cursorTop() {
 	d.cursor.Row = 0
 	d.clampCursor()
 	d.cursorGoal = d.cursor.Col
-	d.ensureCursorVisible()
+	d.ensureCursorRowVisible()
 	d.updateVisualSelection()
 }
 
@@ -4543,7 +4581,7 @@ func (d *diffViewer) cursorBottom() {
 	d.cursor.Row = len(d.rows) - 1
 	d.clampCursor()
 	d.cursorGoal = d.cursor.Col
-	d.ensureCursorVisible()
+	d.ensureCursorRowVisible()
 	d.updateVisualSelection()
 }
 
@@ -4795,6 +4833,11 @@ func (d *diffViewer) prepareCursorForMovement() {
 }
 
 func (d *diffViewer) ensureCursorVisible() {
+	d.ensureCursorRowVisible()
+	d.ensureCursorColumnVisible()
+}
+
+func (d *diffViewer) ensureCursorRowVisible() {
 	d.clampCursor()
 	if len(d.rows) == 0 {
 		return
@@ -4815,8 +4858,6 @@ func (d *diffViewer) ensureCursorVisible() {
 		d.ensureCommentEditorVisible(visible)
 		d.clampScroll()
 	}
-
-	d.ensureCursorColumnVisible()
 }
 
 func (d *diffViewer) ensureCommentEditorVisible(visible int) {
@@ -4943,6 +4984,11 @@ func (d *diffViewer) scrollBy(delta int) {
 	d.clampScroll()
 	d.clampCursorToVisibleRows()
 	d.cursorGoal = d.cursor.Col
+}
+
+func (d *diffViewer) scrollHorizontallyBy(delta int) {
+	d.xScroll += delta
+	d.clampHorizontalScroll()
 }
 
 func (d *diffViewer) clampCursorToVisibleRows() {

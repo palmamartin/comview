@@ -2409,6 +2409,73 @@ func TestDiffViewerHorizontalNavigationKeys(t *testing.T) {
 	}
 }
 
+func TestDiffViewerLayoutPreservesHorizontalScroll(t *testing.T) {
+	row := diff.Row{
+		Kind: diff.RowContext,
+		Code: strings.Repeat("x", 120),
+	}
+	row.Text = row.Code
+	viewer := &diffViewer{
+		rows:    []diff.Row{row},
+		cursor:  selectionPoint{Row: 0, Col: 0},
+		xScroll: 10,
+	}
+
+	viewer.Layout(Tight(Size{Width: 20, Height: 5}))
+
+	if viewer.xScroll != 10 {
+		t.Fatalf("xScroll = %d, want preserved 10", viewer.xScroll)
+	}
+}
+
+func TestDiffViewerHidesCursorOutsideHorizontalViewport(t *testing.T) {
+	row := diff.Row{
+		Kind: diff.RowContext,
+		Code: strings.Repeat("x", 120),
+	}
+	row.Text = row.Code
+	viewer := &diffViewer{
+		rows:    []diff.Row{row},
+		cursor:  selectionPoint{Row: 0, Col: 0},
+		xScroll: 10,
+	}
+	viewer.Layout(Tight(Size{Width: 20, Height: 5}))
+
+	_, _, ok := viewer.cursorScreenPositionForSize(20, 5)
+	if ok {
+		t.Fatal("cursor position found, want hidden when cursor is left of viewport")
+	}
+}
+
+func TestDiffViewerVerticalMovementPreservesHorizontalScroll(t *testing.T) {
+	rows := []diff.Row{
+		{Kind: diff.RowContext, Code: strings.Repeat("a", 120), Text: strings.Repeat("a", 120)},
+		{Kind: diff.RowContext, Code: strings.Repeat("b", 120), Text: strings.Repeat("b", 120)},
+	}
+	viewer := &diffViewer{
+		rows:       rows,
+		cursor:     selectionPoint{Row: 0, Col: 0},
+		cursorGoal: 0,
+		xScroll:    10,
+	}
+	viewer.Layout(Tight(Size{Width: 20, Height: 5}))
+	viewer.xScroll = 10
+
+	cmd, err := viewer.HandleEvent(vaxis.Key{Text: "j", Keycode: 'j'})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cmd != CommandRedraw {
+		t.Fatalf("command = %v, want redraw", cmd)
+	}
+	if viewer.cursor.Row != 1 {
+		t.Fatalf("cursor row = %d, want 1", viewer.cursor.Row)
+	}
+	if viewer.xScroll != 10 {
+		t.Fatalf("xScroll = %d, want preserved 10", viewer.xScroll)
+	}
+}
+
 func TestDiffViewerLineBoundaryKeys(t *testing.T) {
 	row := diff.Row{
 		Kind:   diff.RowAdd,
@@ -2704,6 +2771,89 @@ func TestDiffViewerMouseWheelScrolls(t *testing.T) {
 				t.Fatalf("pending keys = %q, want empty", viewer.keys.Pending())
 			}
 		})
+	}
+}
+
+func TestDiffViewerHorizontalMouseWheelScrolls(t *testing.T) {
+	viewer := &diffViewer{
+		rows: []diff.Row{{
+			Kind: diff.RowContext,
+			Text: strings.Repeat("x", 80),
+		}},
+	}
+	viewer.Layout(Tight(Size{Width: 20, Height: 5}))
+
+	cmd, err := viewer.HandleEvent(vaxis.Mouse{Button: mouseWheelRight})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cmd != CommandRedraw {
+		t.Fatalf("right wheel command = %v, want redraw", cmd)
+	}
+	if viewer.xScroll != 1 {
+		t.Fatalf("xScroll after right wheel = %d, want 1", viewer.xScroll)
+	}
+
+	cmd, err = viewer.HandleEvent(vaxis.Mouse{Button: mouseWheelLeft})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cmd != CommandRedraw {
+		t.Fatalf("left wheel command = %v, want redraw", cmd)
+	}
+	if viewer.xScroll != 0 {
+		t.Fatalf("xScroll after left wheel = %d, want 0", viewer.xScroll)
+	}
+}
+
+func TestDiffViewerMouseWheelAxesApplyIndependently(t *testing.T) {
+	var rows []diff.Row
+	for range 20 {
+		rows = append(rows, diff.Row{
+			Kind: diff.RowContext,
+			Text: strings.Repeat("x", 80),
+		})
+	}
+	viewer := &diffViewer{rows: rows}
+	viewer.Layout(Tight(Size{Width: 20, Height: 5}))
+
+	cmd, err := viewer.HandleEvent(vaxis.Mouse{Button: vaxis.MouseWheelDown})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cmd != CommandRedraw {
+		t.Fatalf("vertical command = %v, want redraw", cmd)
+	}
+	if viewer.scroll != 1 {
+		t.Fatalf("scroll = %d, want 1", viewer.scroll)
+	}
+
+	cmd, err = viewer.HandleEvent(vaxis.Mouse{Button: mouseWheelRight})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cmd != CommandRedraw {
+		t.Fatalf("horizontal command = %v, want redraw", cmd)
+	}
+	if viewer.scroll != 1 {
+		t.Fatalf("scroll after horizontal wheel = %d, want preserved 1", viewer.scroll)
+	}
+	if viewer.xScroll != 1 {
+		t.Fatalf("xScroll = %d, want 1", viewer.xScroll)
+	}
+
+	cmd, err = viewer.HandleEvent(vaxis.Mouse{Button: vaxis.MouseWheelUp})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cmd != CommandRedraw {
+		t.Fatalf("vertical command after horizontal wheel = %v, want redraw", cmd)
+	}
+	if viewer.scroll != 0 {
+		t.Fatalf("scroll after up wheel = %d, want 0", viewer.scroll)
+	}
+	if viewer.xScroll != 1 {
+		t.Fatalf("xScroll after vertical wheel = %d, want preserved 1", viewer.xScroll)
 	}
 }
 
