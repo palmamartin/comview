@@ -163,6 +163,44 @@ diff --git a/second.go b/second.go
 	}
 }
 
+func TestDiffViewerFileFinderIncludesDiffStatFiles(t *testing.T) {
+	rows, err := rowsForInput(` README.md        |  1 +
+ tui/app.go       | 12 ++++++------
+ 2 files changed, 7 insertions(+), 6 deletions(-)
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	viewer := &diffViewer{rows: rows}
+
+	items := viewer.fileFinderItems()
+	if len(items) != 2 {
+		t.Fatalf("items = %+v, want 2", items)
+	}
+	if items[1].Label != "tui/app.go" || items[1].Detail != "+6 -6" {
+		t.Fatalf("second item = %+v", items[1])
+	}
+}
+
+func TestDiffViewerStatusCountsDiffStatFiles(t *testing.T) {
+	rows, err := rowsForInput(` README.md        |  1 +
+ tui/app.go       | 12 ++++++------
+ 2 files changed, 7 insertions(+), 6 deletions(-)
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	viewer := &diffViewer{rows: rows, cursor: selectionPoint{Row: 1}}
+
+	context := viewer.currentStatusContext()
+	if context.Files != 2 || context.FileIndex != 2 || context.File != "tui/app.go" {
+		t.Fatalf("context = %+v, want second of two stat files", context)
+	}
+	if context.TotalStats.Adds != 7 || context.TotalStats.Deletes != 6 {
+		t.Fatalf("total stats = %+v, want +7 -6", context.TotalStats)
+	}
+}
+
 func TestDiffViewerFileFinderJumpsToSelectedFile(t *testing.T) {
 	rows, err := rowsForInput(`diff --git a/first.go b/first.go
 --- a/first.go
@@ -584,6 +622,44 @@ func TestDiffViewerStylesCommitPreambleRows(t *testing.T) {
 	}
 	if trailer[0].Style.Foreground != viewer.scheme.Blue || trailer[1].Style.Foreground != viewer.scheme.Dim {
 		t.Fatalf("trailer segments = %+v", trailer)
+	}
+}
+
+func TestDiffViewerStylesDiffStatRows(t *testing.T) {
+	viewer := &diffViewer{
+		rows: []diff.Row{
+			{Kind: diff.RowDiffStat, Stat: diff.Stat{Path: "README.md", Changed: 1, Bar: "+"}},
+			{Kind: diff.RowDiffStat, Stat: diff.Stat{Path: "tui/app.go", Changed: 12, Bar: "++++++------"}},
+		},
+	}
+	viewer.ensureColorScheme()
+
+	segments, ok := viewer.structuredSegments(viewer.rows[0])
+	if !ok {
+		t.Fatal("diff stat segments missing")
+	}
+
+	var addStyled bool
+	for _, segment := range segments {
+		if segment.Text == "+" && segment.Style.Foreground == viewer.scheme.Add {
+			addStyled = true
+		}
+	}
+	deleteSegments, ok := viewer.structuredSegments(viewer.rows[1])
+	if !ok {
+		t.Fatal("second diff stat segments missing")
+	}
+	var deleteStyled bool
+	for _, segment := range deleteSegments {
+		if segment.Text == "-" && segment.Style.Foreground == viewer.scheme.Delete {
+			deleteStyled = true
+		}
+	}
+	if !addStyled || !deleteStyled {
+		t.Fatalf("stat segments = %+v, want colored add/delete", segments)
+	}
+	if got, want := segmentsText(segments[:3]), " README.md  |  1 "; got != want {
+		t.Fatalf("stat prefix = %q, want %q", got, want)
 	}
 }
 

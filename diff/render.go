@@ -2,10 +2,15 @@ package diff
 
 import (
 	"fmt"
+	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/rockorager/comview/review"
 )
+
+var diffStatLine = regexp.MustCompile(`^ (.+?) \| +([0-9]+) ([+\-]+)$`)
+var diffStatSummary = regexp.MustCompile(`^ ([0-9]+) files? changed(?:, ([0-9]+) insertions?\(\+\))?(?:, ([0-9]+) deletions?\(-\))?$`)
 
 type RenderOptions struct {
 	ShowPreamble         bool
@@ -104,6 +109,10 @@ func renderPreambleRows(lines []string) []Row {
 		case isCommitTrailerLine(line):
 			prefix, code := splitPreambleLabel(line)
 			rows = append(rows, Row{Kind: RowCommitTrailer, Text: line, Prefix: prefix, Code: code})
+		case isDiffStatSummaryLine(line):
+			rows = append(rows, renderDiffStatSummaryRow(line))
+		case isDiffStatLine(line):
+			rows = append(rows, renderDiffStatRow(line))
 		case strings.HasPrefix(line, "    "):
 			rows = append(rows, Row{Kind: RowCommitMessage, Text: line})
 		default:
@@ -111,6 +120,54 @@ func renderPreambleRows(lines []string) []Row {
 		}
 	}
 	return rows
+}
+
+func isDiffStatLine(line string) bool {
+	return diffStatLine.MatchString(line)
+}
+
+func renderDiffStatRow(line string) Row {
+	matches := diffStatLine.FindStringSubmatch(line)
+	if matches == nil {
+		return Row{Kind: RowPreamble, Text: line}
+	}
+	changed, _ := strconv.Atoi(matches[2])
+	bar := matches[3]
+	return Row{
+		Kind:     RowDiffStat,
+		Text:     strings.TrimSpace(line),
+		FileName: strings.TrimSpace(matches[1]),
+		Stat: Stat{
+			Path:    strings.TrimSpace(matches[1]),
+			Bar:     bar,
+			Changed: changed,
+			Adds:    strings.Count(bar, "+"),
+			Deletes: strings.Count(bar, "-"),
+		},
+	}
+}
+
+func isDiffStatSummaryLine(line string) bool {
+	return diffStatSummary.MatchString(line)
+}
+
+func renderDiffStatSummaryRow(line string) Row {
+	matches := diffStatSummary.FindStringSubmatch(line)
+	if matches == nil {
+		return Row{Kind: RowPreamble, Text: line}
+	}
+	files, _ := strconv.Atoi(matches[1])
+	adds, _ := strconv.Atoi(matches[2])
+	deletes, _ := strconv.Atoi(matches[3])
+	return Row{
+		Kind: RowDiffStatSummary,
+		Text: strings.TrimSpace(line),
+		Stat: Stat{
+			Files:   files,
+			Adds:    adds,
+			Deletes: deletes,
+		},
+	}
 }
 
 func isCommitMetaLine(line string) bool {

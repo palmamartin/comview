@@ -150,6 +150,44 @@ diff --git a/main.go b/main.go
 	}
 }
 
+func TestRowsWithOptionsRendersDiffStatRows(t *testing.T) {
+	doc, err := Parse(`commit abc123
+Author: Example <example@example.com>
+
+ README.md        |  1 +
+ tui/app.go       | 12 ++++++------
+ 2 files changed, 7 insertions(+), 6 deletions(-)
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	rows := doc.Rows()
+
+	var statRows []Row
+	var summary Row
+	for _, row := range rows {
+		switch row.Kind {
+		case RowDiffStat:
+			statRows = append(statRows, row)
+		case RowDiffStatSummary:
+			summary = row
+		}
+	}
+	if len(statRows) != 2 {
+		t.Fatalf("stat rows = %+v, want 2", statRows)
+	}
+	if statRows[0].Stat.Path != "README.md" || statRows[0].Stat.Adds != 1 || statRows[0].Stat.Deletes != 0 {
+		t.Fatalf("first stat = %+v", statRows[0].Stat)
+	}
+	if statRows[1].Stat.Path != "tui/app.go" || statRows[1].Stat.Adds != 6 || statRows[1].Stat.Deletes != 6 {
+		t.Fatalf("second stat = %+v", statRows[1].Stat)
+	}
+	if summary.Kind != RowDiffStatSummary || summary.Stat.Files != 2 || summary.Stat.Adds != 7 || summary.Stat.Deletes != 6 {
+		t.Fatalf("summary = %+v", summary)
+	}
+}
+
 func TestRowsWithOptionsInterleavesMultipleCommitPreambles(t *testing.T) {
 	doc, err := Parse(`commit abc123
 Author: Example <example@example.com>

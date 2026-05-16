@@ -64,7 +64,17 @@ type Row struct {
 	Marker      string
 	Code        string
 	Prefix      string
+	Stat        Stat
 	InlineSpans []InlineSpan
+}
+
+type Stat struct {
+	Path    string
+	Bar     string
+	Adds    int
+	Deletes int
+	Files   int
+	Changed int
 }
 
 type InlineSpan struct {
@@ -87,6 +97,8 @@ const (
 	RowCommitMeta
 	RowCommitMessage
 	RowCommitTrailer
+	RowDiffStat
+	RowDiffStatSummary
 	RowBlank
 	RowFile
 	RowMeta
