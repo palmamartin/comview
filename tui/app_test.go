@@ -2167,6 +2167,33 @@ func TestDiffViewerCommentEditorShiftBackspaceDeletes(t *testing.T) {
 	}
 }
 
+func TestDiffViewerCommentEditorShiftEInsertsCapitalE(t *testing.T) {
+	viewer := &diffViewer{
+		rows: []diff.Row{{
+			Kind:   diff.RowAdd,
+			Text:   "hello",
+			Code:   "hello",
+			Review: review.Anchor{Path: "main.go", Line: 1, Side: review.SideRight},
+		}},
+	}
+	viewer.Layout(Tight(Size{Width: 40, Height: 10}))
+	openReviewCommentEditor(t, viewer)
+
+	cmd, err := viewer.HandleEvent(vaxis.Key{Text: "E", Keycode: 'e', ShiftedCode: 'E', Modifiers: vaxis.ModShift})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cmd != CommandRedraw {
+		t.Fatalf("command = %v, want %v", cmd, CommandRedraw)
+	}
+	if viewer.mode != modeInsert {
+		t.Fatalf("mode = %v, want insert", viewer.mode)
+	}
+	if got, want := viewer.editor.body(), "E"; got != want {
+		t.Fatalf("editor body = %q, want %q", got, want)
+	}
+}
+
 func TestDiffViewerCommentEditorEscapeLeavesInsertThenClosesAndSaves(t *testing.T) {
 	viewer := &diffViewer{
 		rows: []diff.Row{
