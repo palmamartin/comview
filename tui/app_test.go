@@ -2882,6 +2882,42 @@ func TestDiffViewerIgnoresKeyReleaseEvents(t *testing.T) {
 	}
 }
 
+func TestDiffViewerScrollsWhenReviewDraftConsumesCursorViewport(t *testing.T) {
+	rows := make([]diff.Row, 8)
+	for i := range rows {
+		rows[i] = diff.Row{
+			Kind:   diff.RowAdd,
+			Text:   "line",
+			Code:   "line",
+			Review: review.Anchor{Path: "main.go", Line: i + 1, Side: review.SideRight},
+		}
+	}
+	viewer := &diffViewer{
+		rows: rows,
+		reviewDrafts: []review.CommentDraft{{
+			Path: "main.go",
+			Line: 1,
+			Side: review.SideRight,
+			Body: "comment",
+		}},
+		cursor: selectionPoint{Row: 1, Col: testCodeOffset(rows[1])},
+	}
+	viewer.Layout(Tight(Size{Width: 80, Height: 6}))
+	viewer.cursorGoal = viewer.cursor.Col
+
+	viewer.moveCursorRows(1)
+
+	if got, want := viewer.cursor.Row, 2; got != want {
+		t.Fatalf("cursor row = %d, want %d", got, want)
+	}
+	if viewer.scroll == 0 {
+		t.Fatal("scroll = 0, want cursor scrolled before leaving viewport")
+	}
+	if _, _, ok := viewer.cursorScreenPositionForSize(80, 6); !ok {
+		t.Fatal("cursor is not visible after moving past review draft")
+	}
+}
+
 func TestDiffViewerHorizontalNavigationKeys(t *testing.T) {
 	tests := []struct {
 		name       string

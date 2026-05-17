@@ -3,7 +3,7 @@ module github.com/rockorager/comview
 go 1.26.1
 
 require (
-	git.sr.ht/~rockorager/vaxis v0.15.1-0.20260516221450-35bc4e1ea1bf
+	git.sr.ht/~rockorager/vaxis v0.15.1-0.20260516233705-b848ef0bd8ce
 	github.com/alecthomas/chroma/v2 v2.24.1
 	github.com/rockorager/go-uucode v1.1.0
 )

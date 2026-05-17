@@ -5938,8 +5938,27 @@ func (d *diffViewer) ensureCursorRowVisible() {
 		if _, ok := d.stickyFileHeader(); ok && d.cursor.Row == d.scroll && d.scroll > 0 {
 			d.scroll--
 		}
+		d.ensureCursorDisplayRowVisible(visible)
 		d.ensureCommentEditorVisible(visible)
 		d.clampScroll()
+	}
+}
+
+func (d *diffViewer) ensureCursorDisplayRowVisible(visible int) {
+	if visible <= 0 {
+		return
+	}
+	for {
+		screenRow := d.screenRowForDocRow(d.cursor.Row, d.width, d.height)
+		if screenRow < visible {
+			return
+		}
+		before := d.scroll
+		d.scroll++
+		d.clampScroll()
+		if d.scroll == before {
+			return
+		}
 	}
 }
 

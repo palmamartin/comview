@@ -1,5 +1,5 @@
-git.sr.ht/~rockorager/vaxis v0.15.1-0.20260516221450-35bc4e1ea1bf h1:JFldoNibOmJ+Sfa6u5q6eEpU9oet+D0Hp4WW0cQqt9E=
-git.sr.ht/~rockorager/vaxis v0.15.1-0.20260516221450-35bc4e1ea1bf/go.mod h1:MueeSvWJmt1L6kFZt0jCL5niXO2Ocgte7f84ZhqNlYk=
+git.sr.ht/~rockorager/vaxis v0.15.1-0.20260516233705-b848ef0bd8ce h1:a2QeBpwLes5A1c9brepWMdATD5URkxqXfUVDLYxlrsI=
+git.sr.ht/~rockorager/vaxis v0.15.1-0.20260516233705-b848ef0bd8ce/go.mod h1:MueeSvWJmt1L6kFZt0jCL5niXO2Ocgte7f84ZhqNlYk=
 github.com/alecthomas/assert/v2 v2.11.0 h1:2Q9r3ki8+JYXvGsDyBXwH3LcJ+WK5D0gc5E8vS6K3D0=
 github.com/alecthomas/assert/v2 v2.11.0/go.mod h1:Bze95FyfUr7x34QZrjL+XP+0qgp/zg8yS+TtBj1WA3k=
 github.com/alecthomas/chroma/v2 v2.24.1 h1:m5ffpfZbIb++k8AqFEKy9uVgY12xIQtBsQlc6DfZJQM=
