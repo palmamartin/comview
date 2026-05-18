@@ -48,15 +48,23 @@ func Run(input string) error {
 		return nil
 	}
 
-	commentFile, err := review.LoadFile(review.DefaultFilePath)
+	cfg := loadConfig()
+
+	commentPath := cfg.CommentFile
+	if commentPath == "" {
+		commentPath = review.DefaultFilePath
+	}
+
+	commentFile, err := review.LoadFile(commentPath)
 	if err != nil {
 		return err
 	}
 	app, err := NewApp(&diffViewer{
 		rows:         rows,
 		reviewDrafts: commentFile.Comments,
-		reviewFile:   review.DefaultFilePath,
+		reviewFile:   commentPath,
 		highlighter:  NewSyntaxHighlighter(),
+		binds:        newBindings(cfg.Keybindings),
 	}, vaxis.Options{
 		CSIuBitMask: keyboardFlags,
 	})
@@ -98,6 +106,7 @@ type diffViewer struct {
 	reviewDirty        bool
 	reviewFile         string
 	editor             *commentEditor
+	binds              Bindings
 	commandLine        string
 	searchQuery        string
 	searchMatches      []searchMatch
@@ -388,7 +397,7 @@ func (d *diffViewer) handleKey(key vaxis.Key) (Command, error) {
 	case key.Matches('e') && d.keys.Pending() == " ":
 		d.keys.Clear()
 		return d.openFileFinderCommand(), nil
-	case key.Matches('/'):
+	case d.binds.Matches(key, "search"):
 		d.keys.Clear()
 		d.enterSearchMode()
 		return CommandRedraw, nil
@@ -396,23 +405,23 @@ func (d *diffViewer) handleKey(key vaxis.Key) (Command, error) {
 		d.keys.Clear()
 		d.enterCommandMode()
 		return CommandRedraw, nil
-	case key.Matches('N'):
+	case d.binds.Matches(key, "prev_result"):
 		d.keys.Clear()
 		if !d.moveSearchMatch(-1) {
 			return CommandNone, nil
 		}
 		return CommandRedraw, nil
-	case key.Matches('s'):
+	case d.binds.Matches(key, "toggle_layout"):
 		d.keys.Clear()
 		d.toggleLayoutMode()
 		return CommandRedraw, nil
-	case key.Matches('n'):
+	case d.binds.Matches(key, "next_result"):
 		d.keys.Clear()
 		if !d.moveSearchMatch(1) {
 			return CommandNone, nil
 		}
 		return CommandRedraw, nil
-	case key.Matches('o'):
+	case d.binds.Matches(key, "open_editor"):
 		d.keys.Clear()
 		if _, ok := d.EditorTarget(); !ok {
 			return CommandRedraw, nil
@@ -463,17 +472,17 @@ func (d *diffViewer) handleKey(key vaxis.Key) (Command, error) {
 		}
 		d.keys.Set("g", time.Now())
 		return CommandNone, nil
-	case key.Matches('G'), key.Matches(vaxis.KeyEnd):
+	case d.binds.Matches(key, "cursor_bottom"):
 		d.keys.Clear()
 		d.cursorBottom()
 		return CommandRedraw, nil
-	case key.Matches('J'):
+	case d.binds.Matches(key, "next_commit"):
 		d.keys.Clear()
 		if !d.jumpCommit(1) {
 			return CommandNone, nil
 		}
 		return CommandRedraw, nil
-	case key.Matches('K'):
+	case d.binds.Matches(key, "prev_commit"):
 		d.keys.Clear()
 		if !d.jumpCommit(-1) {
 			return CommandNone, nil
@@ -486,7 +495,7 @@ func (d *diffViewer) handleKey(key vaxis.Key) (Command, error) {
 		d.keys.Clear()
 		d.cursorTop()
 		return CommandRedraw, nil
-	case key.Matches('d', vaxis.ModCtrl), key.Matches(vaxis.KeyPgDown):
+	case d.binds.Matches(key, "half_page_down"):
 		d.keys.Clear()
 		d.moveCursorRows(d.halfPage())
 		return CommandRedraw, nil
@@ -497,29 +506,29 @@ func (d *diffViewer) handleKey(key vaxis.Key) (Command, error) {
 		}
 		d.keys.Set("d", time.Now())
 		return CommandNone, nil
-	case key.Matches('u', vaxis.ModCtrl), key.Matches(vaxis.KeyPgUp):
+	case d.binds.Matches(key, "half_page_up"):
 		d.keys.Clear()
 		d.moveCursorRows(-d.halfPage())
 		return CommandRedraw, nil
-	case key.Matches('j'), key.Matches(vaxis.KeyDown), key.MatchString("Down"):
+	case d.binds.Matches(key, "cursor_down"):
 		d.keys.Clear()
 		if d.mode == modeNormal && d.focusAdjacentComment(1) {
 			return CommandRedraw, nil
 		}
 		d.moveCursorRows(1)
 		return CommandRedraw, nil
-	case key.Matches('k'), key.Matches(vaxis.KeyUp), key.MatchString("Up"):
+	case d.binds.Matches(key, "cursor_up"):
 		d.keys.Clear()
 		if d.mode == modeNormal && d.focusAdjacentComment(-1) {
 			return CommandRedraw, nil
 		}
 		d.moveCursorRows(-1)
 		return CommandRedraw, nil
-	case key.Matches('l'), key.Matches(vaxis.KeyRight):
+	case d.binds.Matches(key, "cursor_right"):
 		d.keys.Clear()
 		d.moveCursorCols(1)
 		return CommandRedraw, nil
-	case key.Matches('h'), key.Matches(vaxis.KeyLeft):
+	case d.binds.Matches(key, "cursor_left"):
 		d.keys.Clear()
 		d.moveCursorCols(-1)
 		return CommandRedraw, nil
@@ -555,8 +564,7 @@ func (d *diffViewer) handleKey(key vaxis.Key) (Command, error) {
 			return CommandNone, nil
 		}
 		return CommandRedraw, nil
-	case key.Matches('y'), key.Matches(vaxis.KeyCopy),
-		key.Matches('c', vaxis.ModSuper):
+	case d.binds.Matches(key, "yank"):
 		d.keys.Clear()
 		if !d.prepareYank() {
 			return CommandNone, nil
@@ -732,10 +740,10 @@ func (d *diffViewer) handleFuzzyKey(key vaxis.Key) Command {
 		if d.finder.Backspace() {
 			return CommandRedraw
 		}
-	case key.Matches(vaxis.KeyDown), key.Matches('n', vaxis.ModCtrl), key.Matches('j', vaxis.ModCtrl):
+	case d.binds.Matches(key, "fuzzy_next"):
 		d.finder.Move(1)
 		return CommandRedraw
-	case key.Matches(vaxis.KeyUp), key.Matches('p', vaxis.ModCtrl), key.Matches('k', vaxis.ModCtrl):
+	case d.binds.Matches(key, "fuzzy_prev"):
 		d.finder.Move(-1)
 		return CommandRedraw
 	case key.Matches('u', vaxis.ModCtrl):
