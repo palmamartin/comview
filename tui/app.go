@@ -15,21 +15,23 @@ import (
 	"github.com/rockorager/comview/review"
 )
 
-const pendingKeyTimeout = 800 * time.Millisecond
-const multiClickTimeout = 500 * time.Millisecond
-const yankHighlightDuration = 180 * time.Millisecond
-const statusMessageTimeout = 2 * time.Second
-const mouseWheelScrollLines = 1
-const mouseWheelScrollColumns = 1
-const scrollbarWidth = 1
-const commentTextMaxWidth = 72
-const verticalScrollbarThumb = "█"
-const horizontalScrollbarThumb = "\U0001FB0B"
-const keyboardFlags = vaxis.CSIuDisambiguate |
-	vaxis.CSIuReportEvents |
-	vaxis.CSIuAlternateKeys |
-	vaxis.CSIuAllKeys |
-	vaxis.CSIuAssociatedText
+const (
+	pendingKeyTimeout        = 800 * time.Millisecond
+	multiClickTimeout        = 500 * time.Millisecond
+	yankHighlightDuration    = 180 * time.Millisecond
+	statusMessageTimeout     = 2 * time.Second
+	mouseWheelScrollLines    = 1
+	mouseWheelScrollColumns  = 1
+	scrollbarWidth           = 1
+	commentTextMaxWidth      = 72
+	verticalScrollbarThumb   = "█"
+	horizontalScrollbarThumb = "\U0001FB0B"
+	keyboardFlags            = vaxis.CSIuDisambiguate |
+		vaxis.CSIuReportEvents |
+		vaxis.CSIuAlternateKeys |
+		vaxis.CSIuAllKeys |
+		vaxis.CSIuAssociatedText
+)
 
 const (
 	mouseWheelLeft  vaxis.MouseButton = 66
@@ -1162,11 +1164,11 @@ func (d *diffViewer) RedrawAfter() (time.Duration, bool) {
 
 func (d *diffViewer) statusModeSegments(separatorBackground vaxis.Color) []vaxis.Segment {
 	return []vaxis.Segment{
-		vaxis.Segment{
+		{
 			Text:  " " + d.modeLabel() + " ",
 			Style: d.statusStyle(),
 		},
-		vaxis.Segment{
+		{
 			Text:  "",
 			Style: d.statusSeparatorStyle(separatorBackground),
 		},
@@ -1563,7 +1565,8 @@ func (d *diffViewer) paintHelpOverlay(win vaxis.Window) {
 			break
 		}
 		keyText := fmt.Sprintf("%-*s", keyWidth, binding.Key)
-		printSegmentsClipped(win, x+2, row, boxWidth-4,
+		printSegmentsClipped(
+			win, x+2, row, boxWidth-4,
 			vaxis.Segment{Text: keyText, Style: borderStyle},
 			vaxis.Segment{Text: "  " + binding.Action, Style: style},
 		)
@@ -1613,11 +1616,13 @@ func (d *diffViewer) paintFuzzyFinder(win vaxis.Window) {
 	titleStyle := style
 	titleStyle.Foreground = d.scheme.Yellow
 	titleStyle.Attribute = vaxis.AttrBold
-	printSegmentsClipped(win, layout.x+2, layout.y+1, layout.boxWidth-4,
+	printSegmentsClipped(
+		win, layout.x+2, layout.y+1, layout.boxWidth-4,
 		vaxis.Segment{Text: d.finder.Title, Style: titleStyle},
 		vaxis.Segment{Text: fmt.Sprintf("  %d/%d", len(matches), len(d.finder.Items)), Style: borderStyle},
 	)
-	printSegmentsClipped(win, layout.x+2, layout.y+2, layout.boxWidth-4,
+	printSegmentsClipped(
+		win, layout.x+2, layout.y+2, layout.boxWidth-4,
 		vaxis.Segment{Text: "> ", Style: borderStyle},
 		vaxis.Segment{Text: d.finder.Query, Style: style},
 	)
@@ -1679,7 +1684,8 @@ func (d *diffViewer) fuzzyDetailSegments(detail string, width int, background va
 	if !ok {
 		return append(segments, vaxis.Segment{Text: detail, Style: baseStyle})
 	}
-	segments = append(segments,
+	segments = append(
+		segments,
 		vaxis.Segment{Text: adds, Style: addStyle},
 		vaxis.Segment{Text: " ", Style: baseStyle},
 		vaxis.Segment{Text: deletes, Style: deleteStyle},
@@ -1839,7 +1845,8 @@ func (d *diffViewer) paintCommentEditorWithLayout(win vaxis.Window, layout comme
 			})
 		}
 		if row < len(layout.wrapped) {
-			printSegmentsHardClipped(win, layout.x+2, screenRow, layout.inputWidth,
+			printSegmentsHardClipped(
+				win, layout.x+2, screenRow, layout.inputWidth,
 				d.commentEditorSegments(layout.wrapped[row], inputStyle)...,
 			)
 		}
@@ -1887,7 +1894,8 @@ func (d *diffViewer) paintReviewDraftBoxInWindow(win vaxis.Window, screenRow int
 		}
 		if rowsPainted < remainingRows {
 			row := screenRow + rowsPainted
-			printSegmentsHardClipped(win, layout.x, row, layout.width,
+			printSegmentsHardClipped(
+				win, layout.x, row, layout.width,
 				vaxis.Segment{Text: "│", Style: borderStyle},
 				vaxis.Segment{Text: " " + line + strings.Repeat(" ", padding) + " ", Style: bodyStyle},
 				vaxis.Segment{Text: "│", Style: borderStyle},

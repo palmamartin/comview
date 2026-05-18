@@ -1,0 +1,20 @@
+[tools]
+go = "1.26.1"
+gofumpt = "0.10.0"
+
+[env]
+GOFLAGS = "-ldflags=-linkmode=external"
+
+[tasks.check]
+description = "Run formatting checks and tests"
+run = [
+  "scripts/check-multiline-functions.sh",
+  "scripts/gofumpt.sh",
+  "go test ./...",
+]
+
+[tasks.fix]
+description = "Format Go files"
+run = [
+  "gofumpt -w $(find . -name '*.go' -not -path './.git/*')",
+]

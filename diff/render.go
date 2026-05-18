@@ -9,8 +9,10 @@ import (
 	"github.com/rockorager/comview/review"
 )
 
-var diffStatLine = regexp.MustCompile(`^ (.+?) \| +([0-9]+) ([+\-]+)$`)
-var diffStatSummary = regexp.MustCompile(`^ ([0-9]+) files? changed(?:, ([0-9]+) insertions?\(\+\))?(?:, ([0-9]+) deletions?\(-\))?$`)
+var (
+	diffStatLine    = regexp.MustCompile(`^ (.+?) \| +([0-9]+) ([+\-]+)$`)
+	diffStatSummary = regexp.MustCompile(`^ ([0-9]+) files? changed(?:, ([0-9]+) insertions?\(\+\))?(?:, ([0-9]+) deletions?\(-\))?$`)
+)
 
 type RenderOptions struct {
 	ShowPreamble         bool
