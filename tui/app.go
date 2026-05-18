@@ -304,7 +304,7 @@ func (d *diffViewer) EditorTarget() (EditorTarget, bool) {
 
 	column := 1
 	if row.Code != "" {
-		column = editorColumnAtCell(row.Code, d.cursor.Col-d.codeOffset(row))
+		column = editorColumnAtCell(row.Code, d.cursor.Col-d.codeOffset(row), tabWidthForFile(row.FileName))
 	}
 	return EditorTarget{Path: row.FileName, Line: line, Column: column}, true
 }
@@ -2372,7 +2372,7 @@ func (d *diffViewer) printRow(win vaxis.Window, row int, docRow int, diffRow dif
 		if diffRow.Code != "" {
 			codeSegments = d.reviewSegments(diffRow, codeSegments)
 			codeSegments = d.searchSegments(docRow, diffRow, codeSegments)
-			printCodeSegmentsAtOffset(win, codeOffset, row, d.xScroll, d.rowSegments(codeSegments, cursorLine)...)
+			printCodeSegmentsAtOffset(win, codeOffset, row, d.xScroll, tabWidthForFile(diffRow.FileName), d.rowSegments(codeSegments, cursorLine)...)
 		}
 		return
 	}
@@ -2387,7 +2387,7 @@ func (d *diffViewer) printRow(win vaxis.Window, row int, docRow int, diffRow dif
 	printSegmentsAt(win, 0, row, segments...)
 	codeSegments = d.reviewSegments(diffRow, codeSegments)
 	codeSegments = d.searchSegments(docRow, diffRow, codeSegments)
-	printCodeSegmentsAtOffset(win, 0, row, d.xScroll, d.rowSegments(codeSegments, cursorLine)...)
+	printCodeSegmentsAtOffset(win, 0, row, d.xScroll, tabWidthForFile(diffRow.FileName), d.rowSegments(codeSegments, cursorLine)...)
 }
 
 func (d *diffViewer) printStructuredRow(win vaxis.Window, row int, docRow int, diffRow diff.Row, cursorLine bool) bool {
@@ -2618,7 +2618,7 @@ func (d *diffViewer) printSideBySideCell(win vaxis.Window, docRow int, side diff
 	}
 	codeSegments := d.reviewSegments(row, d.codeSegmentsForRow(docRow))
 	codeSegments = d.searchSegments(docRow, row, codeSegments)
-	printCodeSegmentsAtOffset(win, codeOffset, 0, d.xScroll, d.rowSegments(codeSegments, cursorLine)...)
+	printCodeSegmentsAtOffset(win, codeOffset, 0, d.xScroll, tabWidthForFile(row.FileName), d.rowSegments(codeSegments, cursorLine)...)
 	d.paintSideBySideSelection(win, docRow, row, codeOffset)
 }
 
@@ -2647,7 +2647,7 @@ func (d *diffViewer) paintSideBySideSelectionCells(dst cellSetter, width int, do
 			continue
 		}
 		dst.SetCell(screenCol, 0, vaxis.Cell{
-			Character: characterAtCell(row.Code, docCol-rowCodeOffset),
+			Character: characterAtCellWithTabWidth(row.Code, docCol-rowCodeOffset, tabWidthForFile(row.FileName)),
 			Style:     d.selectionCellStyle(row, docCol, spec.style),
 		})
 	}
@@ -3288,8 +3288,9 @@ func (d *diffViewer) selectToken(point selectionPoint) Command {
 		return CommandNone
 	}
 
-	start, end := tokenRangeAt(d.rows[point.Row].Text, point.Col)
-	codeStart, codeEnd, ok := d.codeRange(d.rows[point.Row])
+	row := d.rows[point.Row]
+	start, end := rowTokenRangeAt(row, point.Col)
+	codeStart, codeEnd, ok := d.codeRange(row)
 	if !ok {
 		return CommandNone
 	}
@@ -3359,8 +3360,9 @@ func (d *diffViewer) selectTextObject(kind textObjectKind, object rune) bool {
 }
 
 func (d *diffViewer) selectWordTextObject(kind textObjectKind) bool {
-	start, end := tokenRangeAt(d.rows[d.cursor.Row].Text, d.cursor.Col)
-	codeStart, codeEnd, ok := d.codeRange(d.rows[d.cursor.Row])
+	row := d.rows[d.cursor.Row]
+	start, end := rowTokenRangeAt(row, d.cursor.Col)
+	codeStart, codeEnd, ok := d.codeRange(row)
 	if !ok {
 		return false
 	}
@@ -3379,11 +3381,11 @@ func (d *diffViewer) selectWordTextObject(kind textObjectKind) bool {
 
 func (d *diffViewer) extendAroundWord(rowIndex int, start int, end int, codeStart int, codeEnd int) int {
 	row := d.rows[rowIndex]
-	for end < codeEnd && isSpaceRune(runeAtCell(row.Text, end)) {
+	for end < codeEnd && isSpaceRune(rowRuneAtCell(row, end)) {
 		end++
 	}
 	if end == codeEnd {
-		for start > codeStart && isSpaceRune(runeAtCell(row.Text, start-1)) {
+		for start > codeStart && isSpaceRune(rowRuneAtCell(row, start-1)) {
 			start--
 		}
 	}
@@ -3791,9 +3793,9 @@ func (d *diffViewer) codeRange(row diff.Row) (int, int, bool) {
 	switch {
 	case row.Gutter != "" || row.Marker != "":
 		start := d.codeOffset(row)
-		return start, start + textCellWidth(row.Code), true
+		return start, start + codeCellWidth(row), true
 	case row.Code != "":
-		return 0, textCellWidth(row.Code), true
+		return 0, codeCellWidth(row), true
 	default:
 		return 0, 0, false
 	}
@@ -3815,6 +3817,7 @@ type textObjectBounds struct {
 	Code      map[int]string
 	CodeStart map[int]int
 	CodeWidth map[int]int
+	TabWidth  map[int]int
 }
 
 type textObjectPosition struct {
@@ -3843,6 +3846,7 @@ func (d *diffViewer) textObjectSearchBounds() (textObjectBounds, bool) {
 		Code:      make(map[int]string, end-start+1),
 		CodeStart: make(map[int]int, end-start+1),
 		CodeWidth: make(map[int]int, end-start+1),
+		TabWidth:  make(map[int]int, end-start+1),
 	}
 	for row := start; row <= end; row++ {
 		codeStart, codeEnd, ok := d.codeRange(d.rows[row])
@@ -3852,6 +3856,7 @@ func (d *diffViewer) textObjectSearchBounds() (textObjectBounds, bool) {
 		bounds.Code[row] = d.rows[row].Code
 		bounds.CodeStart[row] = codeStart
 		bounds.CodeWidth[row] = codeEnd - codeStart
+		bounds.TabWidth[row] = tabWidthForFile(d.rows[row].FileName)
 	}
 	if _, ok := bounds.CodeStart[d.cursor.Row]; !ok {
 		return textObjectBounds{}, false
@@ -3894,7 +3899,7 @@ func (d *diffViewer) paintSelection(win vaxis.Window, screenRow int, docRow int)
 		docCol := d.documentColumn(spec.row, screenCol)
 		if docCol >= spec.startCol && docCol < spec.endCol {
 			win.SetCell(screenCol, screenRow, vaxis.Cell{
-				Character: characterAtCell(spec.row.Text, docCol),
+				Character: rowCharacterAtCell(spec.row, docCol),
 				Style:     d.selectionCellStyle(spec.row, docCol, spec.style),
 			})
 		}
@@ -4075,8 +4080,8 @@ func (d *diffViewer) selectionText() string {
 		}
 		var rowText string
 		if rowStart < rowEnd {
-			rowText = cellTextRange(d.rows[rowIndex].Text, rowStart, rowEnd)
-			if textCellWidth(d.rows[rowIndex].Text) < rowEnd {
+			rowText = rowCellTextRange(d.rows[rowIndex], rowStart, rowEnd)
+			if rowTextCellWidth(d.rows[rowIndex]) < rowEnd {
 				rowText += " "
 			}
 		} else if d.selectedEmptyCell(rowIndex, rowStart, rowEnd) {
@@ -4843,10 +4848,16 @@ func (d *diffViewer) updateSearchMatches() {
 			}
 			matchStart := start + index
 			matchEnd := matchStart + len(query)
+			matchStartCol := textCellWidth(searchText[:matchStart])
+			matchEndCol := textCellWidth(searchText[:matchEnd])
+			if row.Code != "" && (row.Gutter != "" || row.Marker != "") {
+				matchStartCol = textCellWidthWithTabWidth(searchText[:matchStart], tabWidthForFile(row.FileName))
+				matchEndCol = textCellWidthWithTabWidth(searchText[:matchEnd], tabWidthForFile(row.FileName))
+			}
 			matches = append(matches, searchMatch{
 				Row:   rowIndex,
-				Start: offset + textCellWidth(searchText[:matchStart]),
-				End:   offset + textCellWidth(searchText[:matchEnd]),
+				Start: offset + matchStartCol,
+				End:   offset + matchEndCol,
 			})
 			start = matchEnd
 		}
@@ -4924,7 +4935,11 @@ func (d *diffViewer) searchSegments(rowIndex int, row diff.Row, segments []vaxis
 			start -= offset
 			end -= offset
 		}
-		segments = styleSegmentsRangeFull(segments, start, end, style)
+		if row.Code != "" {
+			segments = styleSegmentsRangeFullWithTabWidth(segments, start, end, style, tabWidthForFile(row.FileName))
+		} else {
+			segments = styleSegmentsRangeFull(segments, start, end, style)
+		}
 	}
 	return segments
 }
@@ -6457,11 +6472,14 @@ func (d *diffViewer) contentWidth() int {
 	width := 0
 	for _, row := range d.rows {
 		rowWidth := textCellWidth(row.Text)
+		if selectableDiffRow(row.Kind) && (row.Code != "" || row.Gutter != "" || row.Marker != "") {
+			rowWidth = d.codeOffset(row) + codeCellWidth(row)
+		}
 		if row.Kind == diff.RowDiffStat {
 			rowWidth = diffStatRowWidth(row, d.diffStatColumns())
 		}
 		if d.layoutMode == layoutSideBySide && selectableDiffRow(row.Kind) {
-			rowWidth = textCellWidth(d.sideBySideGutter(row, sideForRow(row))) + textCellWidth(row.Code)
+			rowWidth = textCellWidth(d.sideBySideGutter(row, sideForRow(row))) + codeCellWidth(row)
 		}
 		if rowWidth > width {
 			width = rowWidth
@@ -6642,6 +6660,9 @@ func (d *diffViewer) reviewSegments(row diff.Row, segments []vaxis.Segment) []va
 		UnderlineColor: d.scheme.Yellow,
 		UnderlineStyle: vaxis.UnderlineCurly,
 	}
+	if row.Code != "" {
+		return styleSegmentsRangeWithTabWidth(segments, start, end, style, tabWidthForFile(row.FileName))
+	}
 	return styleSegmentsRange(segments, start, end, style)
 }
 
@@ -6747,7 +6768,7 @@ func countLabel(count int, singular string) string {
 	return fmt.Sprintf("%d %ss", count, singular)
 }
 
-func printCodeSegmentsAtOffset(win vaxis.Window, col int, row int, offset int, segments ...vaxis.Segment) {
+func printCodeSegmentsAtOffset(win vaxis.Window, col int, row int, offset int, tabWidth int, segments ...vaxis.Segment) {
 	width, height := win.Size()
 	if col >= width || row < 0 || row >= height {
 		return
@@ -6755,7 +6776,7 @@ func printCodeSegmentsAtOffset(win vaxis.Window, col int, row int, offset int, s
 
 	code := win.New(col, row, -1, 1)
 	codeWidth, _ := code.Size()
-	paintSegmentsOffset(code, codeWidth, 0, 0, offset, segments...)
+	paintSegmentsOffsetWithTabWidth(code, codeWidth, 0, 0, offset, tabWidth, segments...)
 }
 
 type cellSetter interface {
@@ -6763,9 +6784,33 @@ type cellSetter interface {
 }
 
 func paintSegmentsOffset(dst cellSetter, width int, row int, col int, offset int, segments ...vaxis.Segment) {
+	paintSegmentsOffsetWithTabWidth(dst, width, row, col, offset, defaultTabWidth, segments...)
+}
+
+func paintSegmentsOffsetWithTabWidth(dst cellSetter, width int, row int, col int, offset int, tabWidth int, segments ...vaxis.Segment) {
 	paintCol := col - offset
 	for _, segment := range segments {
-		for _, char := range vaxis.Characters(segment.Text) {
+		it := uucode.NewGraphemeIterator(segment.Text)
+		for g, ok := it.Next(); ok; g, ok = it.Next() {
+			grapheme := segment.Text[g.Start:g.End]
+			if grapheme == "\t" {
+				if paintCol >= width {
+					return
+				}
+				for tabCol := 0; tabCol < tabWidth; tabCol++ {
+					cellCol := paintCol + tabCol
+					if cellCol >= 0 && cellCol < width {
+						dst.SetCell(cellCol, row, vaxis.Cell{
+							Character: vaxis.Character{Grapheme: " ", Width: 1},
+							Style:     segment.Style,
+						})
+					}
+				}
+				paintCol += tabWidth
+				continue
+			}
+
+			char := characterForGraphemeWithTabWidth(grapheme, tabWidth)
 			if paintCol >= width {
 				return
 			}
@@ -6789,6 +6834,10 @@ func segmentTextWidth(segments []vaxis.Segment) int {
 }
 
 func styleSegmentsRange(segments []vaxis.Segment, start int, end int, style vaxis.Style) []vaxis.Segment {
+	return styleSegmentsRangeWithTabWidth(segments, start, end, style, defaultTabWidth)
+}
+
+func styleSegmentsRangeWithTabWidth(segments []vaxis.Segment, start int, end int, style vaxis.Style, tabWidth int) []vaxis.Segment {
 	if start >= end {
 		return segments
 	}
@@ -6796,7 +6845,10 @@ func styleSegmentsRange(segments []vaxis.Segment, start int, end int, style vaxi
 	var styled []vaxis.Segment
 	col := 0
 	for _, segment := range segments {
-		for _, char := range vaxis.Characters(segment.Text) {
+		it := uucode.NewGraphemeIterator(segment.Text)
+		for g, ok := it.Next(); ok; g, ok = it.Next() {
+			grapheme := segment.Text[g.Start:g.End]
+			char := characterForGraphemeWithTabWidth(grapheme, tabWidth)
 			next := col + char.Width
 			charStyle := segment.Style
 			if next > start && col < end {
@@ -6804,7 +6856,7 @@ func styleSegmentsRange(segments []vaxis.Segment, start int, end int, style vaxi
 				charStyle.UnderlineStyle = style.UnderlineStyle
 			}
 			styled = appendSegment(styled, vaxis.Segment{
-				Text:  char.Grapheme,
+				Text:  grapheme,
 				Style: charStyle,
 			})
 			col = next
@@ -6814,6 +6866,10 @@ func styleSegmentsRange(segments []vaxis.Segment, start int, end int, style vaxi
 }
 
 func styleSegmentsRangeFull(segments []vaxis.Segment, start int, end int, style vaxis.Style) []vaxis.Segment {
+	return styleSegmentsRangeFullWithTabWidth(segments, start, end, style, defaultTabWidth)
+}
+
+func styleSegmentsRangeFullWithTabWidth(segments []vaxis.Segment, start int, end int, style vaxis.Style, tabWidth int) []vaxis.Segment {
 	if start >= end {
 		return segments
 	}
@@ -6821,7 +6877,10 @@ func styleSegmentsRangeFull(segments []vaxis.Segment, start int, end int, style 
 	var styled []vaxis.Segment
 	col := 0
 	for _, segment := range segments {
-		for _, char := range vaxis.Characters(segment.Text) {
+		it := uucode.NewGraphemeIterator(segment.Text)
+		for g, ok := it.Next(); ok; g, ok = it.Next() {
+			grapheme := segment.Text[g.Start:g.End]
+			char := characterForGraphemeWithTabWidth(grapheme, tabWidth)
 			next := col + char.Width
 			charStyle := segment.Style
 			if next > start && col < end {
@@ -6840,7 +6899,7 @@ func styleSegmentsRangeFull(segments []vaxis.Segment, start int, end int, style 
 				charStyle.Attribute |= style.Attribute
 			}
 			styled = appendSegment(styled, vaxis.Segment{
-				Text:  char.Grapheme,
+				Text:  grapheme,
 				Style: charStyle,
 			})
 			col = next
@@ -6869,7 +6928,7 @@ func textCellWidth(text string) int {
 	return width
 }
 
-func editorColumnAtCell(text string, target int) int {
+func editorColumnAtCell(text string, target int, tabWidth int) int {
 	if target < 0 {
 		return 1
 	}
@@ -6878,7 +6937,7 @@ func editorColumnAtCell(text string, target int) int {
 	cell := 0
 	it := uucode.NewGraphemeIterator(text)
 	for g, ok := it.Next(); ok; g, ok = it.Next() {
-		next := cell + graphemeCellWidth(text[g.Start:g.End])
+		next := cell + graphemeCellWidthWithTabWidth(text[g.Start:g.End], tabWidth)
 		if target < next {
 			return column
 		}
@@ -6889,12 +6948,18 @@ func editorColumnAtCell(text string, target int) int {
 }
 
 func characterAtCell(text string, target int) vaxis.Character {
+	return characterAtCellWithTabWidth(text, target, defaultTabWidth)
+}
+
+func characterAtCellWithTabWidth(text string, target int, tabWidth int) vaxis.Character {
 	if target < 0 {
 		target = 0
 	}
 
 	col := 0
-	for _, char := range vaxis.Characters(text) {
+	it := uucode.NewGraphemeIterator(text)
+	for g, ok := it.Next(); ok; g, ok = it.Next() {
+		char := characterForGraphemeWithTabWidth(text[g.Start:g.End], tabWidth)
 		next := col + char.Width
 		if target >= col && target < next {
 			if target == col && char.Width == 1 {
@@ -6912,6 +6977,25 @@ func characterAtCell(text string, target int) vaxis.Character {
 
 func runeAtCell(text string, target int) rune {
 	return []rune(characterAtCell(text, target).Grapheme)[0]
+}
+
+func runeAtCellWithTabWidth(text string, target int, tabWidth int) rune {
+	return []rune(characterAtCellWithTabWidth(text, target, tabWidth).Grapheme)[0]
+}
+
+func rowRuneAtCell(row diff.Row, target int) rune {
+	return []rune(rowCharacterAtCell(row, target).Grapheme)[0]
+}
+
+func rowCharacterAtCell(row diff.Row, target int) vaxis.Character {
+	codeStart := textCellWidth(row.Gutter + row.Marker)
+	if row.Code != "" && (row.Gutter != "" || row.Marker != "") && target >= codeStart {
+		return characterAtCellWithTabWidth(row.Code, target-codeStart, tabWidthForFile(row.FileName))
+	}
+	if row.Code != "" && row.Text == row.Code {
+		return characterAtCellWithTabWidth(row.Code, target, tabWidthForFile(row.FileName))
+	}
+	return characterAtCell(row.Text, target)
 }
 
 func isSpaceRune(r rune) bool {
@@ -6943,11 +7027,157 @@ func cellTextRange(text string, start int, end int) string {
 	return out.String()
 }
 
+func rowCellTextRange(row diff.Row, start int, end int) string {
+	codeStart := textCellWidth(row.Gutter + row.Marker)
+	if row.Code == "" || ((row.Gutter == "" && row.Marker == "") && row.Text != row.Code) {
+		return cellTextRange(row.Text, start, end)
+	}
+
+	var out strings.Builder
+	if start < codeStart {
+		out.WriteString(cellTextRange(row.Gutter+row.Marker, start, minInt(end, codeStart)))
+	}
+	if end > codeStart {
+		out.WriteString(cellTextRangeWithTabWidth(row.Code, maxInt(0, start-codeStart), end-codeStart, tabWidthForFile(row.FileName)))
+	}
+	return out.String()
+}
+
+func cellTextRangeWithTabWidth(text string, start int, end int, tabWidth int) string {
+	if start < 0 {
+		start = 0
+	}
+	if end <= start {
+		return ""
+	}
+
+	var out strings.Builder
+	col := 0
+	it := uucode.NewGraphemeIterator(text)
+	for g, ok := it.Next(); ok; g, ok = it.Next() {
+		cluster := text[g.Start:g.End]
+		next := col + graphemeCellWidthWithTabWidth(cluster, tabWidth)
+		if next > start && col < end {
+			out.WriteString(cluster)
+		}
+		col = next
+		if col >= end {
+			break
+		}
+	}
+	return out.String()
+}
+
 func graphemeCellWidth(grapheme string) int {
+	return graphemeCellWidthWithTabWidth(grapheme, defaultTabWidth)
+}
+
+const defaultTabWidth = 8
+
+func graphemeCellWidthWithTabWidth(grapheme string, tabWidth int) int {
 	if grapheme == "\t" {
-		return 8
+		return tabWidth
 	}
 	return uucode.StringWidth(grapheme)
+}
+
+func tabWidthForFile(fileName string) int {
+	if fileName == "" {
+		return defaultTabWidth
+	}
+	if strings.HasSuffix(fileName, ".go") {
+		return defaultTabWidth
+	}
+	return 4
+}
+
+func codeCellWidth(row diff.Row) int {
+	return textCellWidthWithTabWidth(row.Code, tabWidthForFile(row.FileName))
+}
+
+func textCellWidthWithTabWidth(text string, tabWidth int) int {
+	width := 0
+	it := uucode.NewGraphemeIterator(text)
+	for g, ok := it.Next(); ok; g, ok = it.Next() {
+		width += graphemeCellWidthWithTabWidth(text[g.Start:g.End], tabWidth)
+	}
+	return width
+}
+
+func rowTextCellWidth(row diff.Row) int {
+	if row.Code != "" && (row.Gutter != "" || row.Marker != "") {
+		return textCellWidth(row.Gutter+row.Marker) + codeCellWidth(row)
+	}
+	if row.Code != "" && row.Text == row.Code {
+		return codeCellWidth(row)
+	}
+	return textCellWidth(row.Text)
+}
+
+func rowTokenRangeAt(row diff.Row, col int) (int, int) {
+	codeStart := textCellWidth(row.Gutter + row.Marker)
+	if row.Code != "" && (row.Gutter != "" || row.Marker != "") && col >= codeStart {
+		start, end := tokenRangeAtWithTabWidth(row.Code, col-codeStart, tabWidthForFile(row.FileName))
+		return codeStart + start, codeStart + end
+	}
+	if row.Code != "" && row.Text == row.Code {
+		return tokenRangeAtWithTabWidth(row.Code, col, tabWidthForFile(row.FileName))
+	}
+	return tokenRangeAt(row.Text, col)
+}
+
+func tokenRangeAtWithTabWidth(text string, col int, tabWidth int) (int, int) {
+	cells := textCellsWithTabWidth(text, tabWidth)
+	if len(cells) == 0 {
+		return 0, 0
+	}
+
+	index := len(cells) - 1
+	for i, cell := range cells {
+		if col < cell.End {
+			index = i
+			break
+		}
+	}
+
+	kind := cells[index].Kind
+	start := index
+	for start > 0 && cells[start-1].Kind == kind {
+		start--
+	}
+	end := index + 1
+	for end < len(cells) && cells[end].Kind == kind {
+		end++
+	}
+	return cells[start].Start, cells[end-1].End
+}
+
+func textCellsWithTabWidth(text string, tabWidth int) []textCell {
+	cells := make([]textCell, 0, utf8.RuneCountInString(text))
+	col := 0
+	it := uucode.NewGraphemeIterator(text)
+	for g, ok := it.Next(); ok; g, ok = it.Next() {
+		cluster := text[g.Start:g.End]
+		start := col
+		end := start + graphemeCellWidthWithTabWidth(cluster, tabWidth)
+		col = end
+		if end <= start {
+			continue
+		}
+		cells = append(cells, textCell{Start: start, End: end, Kind: selectionTokenKind(cluster)})
+	}
+	return cells
+}
+
+func characterForGraphemeWithTabWidth(grapheme string, tabWidth int) vaxis.Character {
+	if grapheme == "\t" {
+		return vaxis.Character{Grapheme: "\t", Width: tabWidth}
+	}
+	chars := vaxis.Characters(grapheme)
+	if len(chars) == 0 {
+		return vaxis.Character{}
+	}
+	return chars[0]
 }
 
 type textCell struct {
@@ -7025,7 +7255,7 @@ func findBracketTextObject(bounds textObjectBounds, cursor textObjectPosition, o
 	pairs := make([]textObjectPair, 0)
 	stack := make([]textObjectPosition, 0)
 	for pos, ok := nextTextObjectScanPosition(bounds, textObjectPosition{Row: bounds.Start, Col: -1}); ok; pos, ok = nextTextObjectScanPosition(bounds, pos) {
-		r := runeAtCell(rowCode(bounds, pos.Row), pos.Col)
+		r := runeAtCellWithTabWidth(rowCode(bounds, pos.Row), pos.Col, bounds.TabWidth[pos.Row])
 		switch r {
 		case open:
 			stack = append(stack, pos)
@@ -7091,7 +7321,7 @@ func findQuoteTextObject(bounds textObjectBounds, cursor textObjectPosition, del
 			continue
 		}
 		for col := 0; col < width; col++ {
-			if runeAtCell(rowCode(bounds, row), col) == delimiter {
+			if runeAtCellWithTabWidth(rowCode(bounds, row), col, bounds.TabWidth[row]) == delimiter {
 				positions = append(positions, textObjectPosition{Row: row, Col: col})
 			}
 		}

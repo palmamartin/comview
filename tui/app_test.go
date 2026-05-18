@@ -131,6 +131,44 @@ func TestDiffViewerEditorTargetUsesTextColumnForTabs(t *testing.T) {
 	}
 }
 
+func TestDiffViewerEditorTargetUsesFourCellTabsForNonGoFiles(t *testing.T) {
+	row := diff.Row{
+		Kind:     diff.RowAdd,
+		FileName: "main.py",
+		Gutter:   "    12 + ",
+		Code:     "\tfoo",
+		Review:   review.Anchor{Line: 12},
+	}
+	codeOffset := testCodeOffset(row)
+	viewer := &diffViewer{
+		rows:   []diff.Row{row},
+		cursor: selectionPoint{Row: 0, Col: codeOffset + 4},
+	}
+
+	target, ok := viewer.EditorTarget()
+	if !ok {
+		t.Fatal("editor target not found")
+	}
+	if target.Column != 2 {
+		t.Fatalf("column = %d, want 2", target.Column)
+	}
+}
+
+func TestPaintCodeSegmentsUsesFourCellSpacesForNonGoTabs(t *testing.T) {
+	cells := testCells{}
+	paintSegmentsOffsetWithTabWidth(cells, 10, 0, 0, 0, tabWidthForFile("main.ts"), vaxis.Segment{Text: "\tfoo"})
+
+	if got, want := cells[0].Character.Grapheme, " "; got != want {
+		t.Fatalf("tab grapheme = %q, want %q", got, want)
+	}
+	if got, want := cells[0].Character.Width, 1; got != want {
+		t.Fatalf("tab width = %d, want %d", got, want)
+	}
+	if got := cells[4].Character.Grapheme; got != "f" {
+		t.Fatalf("cell 4 = %q, want f", got)
+	}
+}
+
 func TestDiffViewerEditorTargetFallsBackToLineOne(t *testing.T) {
 	viewer := &diffViewer{
 		rows: []diff.Row{{Kind: diff.RowFile, Text: "main.go", FileName: "main.go"}},
@@ -2831,6 +2869,34 @@ func TestDiffViewerSearchSegmentsHighlightMatches(t *testing.T) {
 	}
 	if segments[1].Style.Background != viewer.scheme.Yellow {
 		t.Fatalf("highlight style = %+v", segments[1].Style)
+	}
+}
+
+func TestDiffViewerSearchSegmentsUseFileTabWidth(t *testing.T) {
+	row := diff.Row{
+		Kind:     diff.RowContext,
+		FileName: "main.ts",
+		Gutter:   "  1   1   ",
+		Code:     "\tneedle",
+	}
+	viewer := &diffViewer{rows: []diff.Row{row}}
+	viewer.ensureColorScheme()
+	viewer.searchQuery = "needle"
+	viewer.updateSearchMatches()
+
+	if len(viewer.searchMatches) != 1 {
+		t.Fatalf("matches = %+v, want one", viewer.searchMatches)
+	}
+	if got, want := viewer.searchMatches[0].Start, viewer.codeOffset(row)+4; got != want {
+		t.Fatalf("match start = %d, want %d", got, want)
+	}
+
+	segments := viewer.searchSegments(0, row, []vaxis.Segment{{Text: row.Code, Style: viewer.baseStyle()}})
+	if len(segments) != 2 {
+		t.Fatalf("segments = %+v, want 2", segments)
+	}
+	if got, want := segments[1].Text, "needle"; got != want {
+		t.Fatalf("highlight text = %q, want %q", got, want)
 	}
 }
 
