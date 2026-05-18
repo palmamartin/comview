@@ -158,13 +158,13 @@ func TestPaintCodeSegmentsUsesFourCellSpacesForNonGoTabs(t *testing.T) {
 	cells := testCells{}
 	paintSegmentsOffsetWithTabWidth(cells, 10, 0, 0, 0, tabWidthForFile("main.ts"), vaxis.Segment{Text: "\tfoo"})
 
-	if got, want := cells[0].Character.Grapheme, " "; got != want {
+	if got, want := cells[0].Grapheme, " "; got != want {
 		t.Fatalf("tab grapheme = %q, want %q", got, want)
 	}
-	if got, want := cells[0].Character.Width, 1; got != want {
+	if got, want := cells[0].Width, 1; got != want {
 		t.Fatalf("tab width = %d, want %d", got, want)
 	}
-	if got := cells[4].Character.Grapheme; got != "f" {
+	if got := cells[4].Grapheme; got != "f" {
 		t.Fatalf("cell 4 = %q, want f", got)
 	}
 }

@@ -1778,19 +1778,6 @@ func (d *diffViewer) fillBox(win vaxis.Window, x int, y int, width int, height i
 	}
 }
 
-func (d *diffViewer) paintCommentEditor(win vaxis.Window) {
-	if d.editor == nil {
-		return
-	}
-
-	width, height := win.Size()
-	layout, ok := d.commentEditorLayout(width, height)
-	if !ok {
-		return
-	}
-	d.paintCommentEditorWithLayout(win, layout, layout.boxHeight)
-}
-
 func (d *diffViewer) paintInlineCommentEditor(win vaxis.Window, screenRow int, remainingRows int) int {
 	return d.paintInlineCommentEditorInWindow(win, screenRow, remainingRows, false)
 }
@@ -2577,10 +2564,6 @@ func (d *diffViewer) paintSideBySideCommentRowsAfterDocRow(win vaxis.Window, scr
 	return d.paintCommentRowsAfterDocRowInWindow(win.New(x, 0, width, -1), screenRow, docRow, remainingRows, true)
 }
 
-func (d *diffViewer) paintCommentRowsAfterDocRow(win vaxis.Window, screenRow int, docRow int, remainingRows int) int {
-	return d.paintCommentRowsAfterDocRowInWindow(win, screenRow, docRow, remainingRows, false)
-}
-
 func (d *diffViewer) paintCommentRowsAfterDocRowInWindow(win vaxis.Window, screenRow int, docRow int, remainingRows int, localGeometry bool) int {
 	if remainingRows <= 0 {
 		return 0
@@ -3083,19 +3066,6 @@ func (d *diffViewer) fillCodeBackground(win vaxis.Window, row int, start int, ki
 			Style: style,
 		})
 	}
-}
-
-func (d *diffViewer) visibleRows() []diff.Row {
-	if d.height <= 1 || d.scroll >= len(d.rows) {
-		return nil
-	}
-
-	available := d.visibleRowCapacity()
-	end := d.scroll + available
-	if end > len(d.rows) {
-		end = len(d.rows)
-	}
-	return d.rows[d.scroll:end]
 }
 
 type scrollbar struct {
@@ -6981,10 +6951,6 @@ func characterAtCellWithTabWidth(text string, target int, tabWidth int) vaxis.Ch
 		Grapheme: " ",
 		Width:    1,
 	}
-}
-
-func runeAtCell(text string, target int) rune {
-	return []rune(characterAtCell(text, target).Grapheme)[0]
 }
 
 func runeAtCellWithTabWidth(text string, target int, tabWidth int) rune {

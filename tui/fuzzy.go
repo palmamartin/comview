@@ -135,10 +135,9 @@ func fuzzyScore(candidate string, query string) (int, bool) {
 		return 0, true
 	}
 	candidateRunes := []rune(strings.ToLower(candidate))
-	queryRunes := []rune(strings.ToLower(query))
 	score := 0
 	last := -1
-	for _, q := range queryRunes {
+	for _, q := range strings.ToLower(query) {
 		if unicode.IsSpace(q) {
 			continue
 		}
