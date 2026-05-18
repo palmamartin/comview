@@ -76,6 +76,7 @@ func rowsForInput(input string) ([]diff.Row, error) {
 type diffViewer struct {
 	rows               []diff.Row
 	scroll             int
+	scrollOffset       int
 	xScroll            int
 	height             int
 	width              int
@@ -571,29 +572,14 @@ func (d *diffViewer) handleMouse(mouse vaxis.Mouse) (Command, error) {
 			d.submitReviewComment()
 		}
 	}
+	if mouseWheelButton(mouse.Button) {
+		return d.handleMouseWheel(mouse), nil
+	}
 	if d.mode == modeInsert || d.mode == modeCommand || d.mode == modeSearch || d.mode == modeFuzzy {
 		return CommandNone, nil
 	}
 
 	switch mouse.Button {
-	case vaxis.MouseWheelDown:
-		d.keys.Clear()
-		d.scrollBy(mouseWheelScrollLines)
-		d.extendSelectionAfterScroll(mouse)
-		return CommandRedraw, nil
-	case vaxis.MouseWheelUp:
-		d.keys.Clear()
-		d.scrollBy(-mouseWheelScrollLines)
-		d.extendSelectionAfterScroll(mouse)
-		return CommandRedraw, nil
-	case mouseWheelLeft:
-		d.keys.Clear()
-		d.scrollHorizontallyBy(-mouseWheelScrollColumns)
-		return CommandRedraw, nil
-	case mouseWheelRight:
-		d.keys.Clear()
-		d.scrollHorizontallyBy(mouseWheelScrollColumns)
-		return CommandRedraw, nil
 	case vaxis.MouseLeftButton:
 		switch mouse.EventType {
 		case vaxis.EventPress:
@@ -614,6 +600,30 @@ func (d *diffViewer) handleMouse(mouse vaxis.Mouse) (Command, error) {
 		return CommandNone, nil
 	}
 	return CommandNone, nil
+}
+
+func mouseWheelButton(button vaxis.MouseButton) bool {
+	return button == vaxis.MouseWheelDown ||
+		button == vaxis.MouseWheelUp ||
+		button == mouseWheelLeft ||
+		button == mouseWheelRight
+}
+
+func (d *diffViewer) handleMouseWheel(mouse vaxis.Mouse) Command {
+	d.keys.Clear()
+	switch mouse.Button {
+	case vaxis.MouseWheelDown:
+		d.scrollBy(mouseWheelScrollLines)
+		d.extendSelectionAfterScroll(mouse)
+	case vaxis.MouseWheelUp:
+		d.scrollBy(-mouseWheelScrollLines)
+		d.extendSelectionAfterScroll(mouse)
+	case mouseWheelLeft:
+		d.scrollHorizontallyBy(-mouseWheelScrollColumns)
+	case mouseWheelRight:
+		d.scrollHorizontallyBy(mouseWheelScrollColumns)
+	}
+	return CommandRedraw
 }
 
 func (d *diffViewer) startTextObject(kind textObjectKind) {
@@ -747,8 +757,7 @@ func (d *diffViewer) acceptFuzzyFinder() Command {
 	}
 	d.closeFuzzyFinder()
 	d.setCursor(selectionPoint{Row: item.Row})
-	d.scroll = item.Row
-	d.clampScroll()
+	d.setScrollRow(item.Row)
 	d.ensureCursorVisible()
 	return CommandRedraw
 }
@@ -832,12 +841,16 @@ func shiftedTextObjectRune(r rune) (rune, bool) {
 
 func (d *diffViewer) Layout(constraints Constraints) Size {
 	size := constraints.Constrain(constraints.Max)
+	widthChanged := d.width != size.Width
+	heightChanged := d.height != size.Height
 	d.height = size.Height
 	d.width = size.Width
 	d.clampCursor()
 	d.clampScroll()
 	d.clampHorizontalScroll()
-	d.ensureCursorRowVisible()
+	if widthChanged || heightChanged {
+		d.ensureCursorRowVisible()
+	}
 	return size
 }
 
@@ -845,6 +858,9 @@ func (d *diffViewer) Paint(win vaxis.Window) {
 	width, height := win.Size()
 	if width == 0 || height == 0 {
 		return
+	}
+	if win.Vx != nil {
+		win.Vx.HideCursor()
 	}
 	d.ensureColorScheme()
 	d.ensureRenderCache()
@@ -892,7 +908,7 @@ func (d *diffViewer) paintStackedRows(win vaxis.Window) {
 		return
 	}
 
-	screenRow := 0
+	screenRow := -d.scrollOffset
 	for docRow := d.scroll; docRow < len(d.rows) && screenRow < visible; docRow++ {
 		d.printRow(win, screenRow, docRow, d.rows[docRow], d.codeSegments[docRow], docRow == d.cursor.Row)
 		d.paintSelection(win, screenRow, docRow)
@@ -965,7 +981,7 @@ func (d *diffViewer) cursorScreenPositionForSize(width int, height int) (int, in
 	}
 
 	screenRow := d.screenRowForDocRow(d.cursor.Row, width, height)
-	if screenRow < 0 || screenRow >= d.visibleRowCapacity() || screenRow >= height {
+	if screenRow < d.topOccludedRows() || screenRow >= d.visibleRowCapacity() || screenRow >= height {
 		return 0, 0, false
 	}
 
@@ -981,11 +997,21 @@ func (d *diffViewer) cursorScreenPositionForSize(width int, height int) (int, in
 	return screenCol, screenRow, true
 }
 
+func (d *diffViewer) topOccludedRows() int {
+	if d.layoutMode == layoutSideBySide {
+		return 0
+	}
+	if _, ok := d.stickyFileHeader(); ok {
+		return 1
+	}
+	return 0
+}
+
 func (d *diffViewer) screenRowForDocRow(docRow int, width int, height int) int {
 	if d.layoutMode == layoutSideBySide {
 		rows := d.sideBySideRows()
 		start := d.sideBySideStart(rows)
-		screenRow := 0
+		screenRow := -d.scrollOffset
 		visible := d.visibleRowCapacity()
 		for index := start; index < len(rows) && screenRow < visible; index++ {
 			if rowContainsDocRow(rows[index], docRow) {
@@ -1001,7 +1027,7 @@ func (d *diffViewer) screenRowForDocRow(docRow int, width int, height int) int {
 	if docRow < d.scroll {
 		return -1
 	}
-	screenRow := 0
+	screenRow := -d.scrollOffset
 	for row := d.scroll; row < docRow && row < len(d.rows); row++ {
 		screenRow++
 		screenRow += d.reviewDraftBoxRowsAfterRowForSize(row, width, height)
@@ -1765,7 +1791,7 @@ func (d *diffViewer) paintInlineCommentEditor(win vaxis.Window, screenRow int, r
 
 func (d *diffViewer) paintInlineCommentEditorInWindow(win vaxis.Window, screenRow int, remainingRows int, localGeometry bool) int {
 	width, height := win.Size()
-	layout, ok := d.commentEditorLayout(width, height)
+	layout, ok := d.commentEditorLayoutForSize(width, height, false)
 	if !ok {
 		return 0
 	}
@@ -1818,7 +1844,7 @@ func (d *diffViewer) paintCommentEditorWithLayout(win vaxis.Window, layout comme
 			)
 		}
 	}
-	d.paintCommentCursor(win, layout)
+	d.paintCommentCursor(win, layout, boxHeight)
 }
 
 func (d *diffViewer) paintReviewDraftBox(win vaxis.Window, screenRow int, docRow int, draft review.CommentDraft, remainingRows int) int {
@@ -1986,6 +2012,10 @@ func (d *diffViewer) commentEditorRect(width int, height int) (int, int, int, in
 }
 
 func (d *diffViewer) commentEditorLayout(width int, height int) (commentEditorLayout, bool) {
+	return d.commentEditorLayoutForSize(width, height, true)
+}
+
+func (d *diffViewer) commentEditorLayoutForSize(width int, height int, requireVisible bool) (commentEditorLayout, bool) {
 	if d.editor == nil || width <= 0 || height <= 2 {
 		return commentEditorLayout{}, false
 	}
@@ -1995,7 +2025,7 @@ func (d *diffViewer) commentEditorLayout(width int, height int) (commentEditorLa
 		return commentEditorLayout{}, false
 	}
 	screenRow := d.screenRowForDocRow(targetRow, width, height)
-	if screenRow < 0 || screenRow >= d.visibleRowCapacity() || screenRow >= height {
+	if requireVisible && (screenRow < 0 || screenRow >= d.visibleRowCapacity() || screenRow >= height) {
 		return commentEditorLayout{}, false
 	}
 
@@ -2084,28 +2114,41 @@ func (d *diffViewer) paintCommentBorder(win vaxis.Window, x int, y int, width in
 	}
 }
 
-func (d *diffViewer) paintCommentCursor(win vaxis.Window, layout commentEditorLayout) {
-	if d.editor == nil {
+func (d *diffViewer) paintCommentCursor(win vaxis.Window, layout commentEditorLayout, paintedHeight int) {
+	if win.Vx == nil {
 		return
 	}
-	visualRow, col, ok := d.editor.cursorDisplayPosition(layout.inputWidth)
+	col, row, ok := d.commentCursorScreenPositionForLayout(layout, paintedHeight, win.Width, win.Height)
 	if !ok {
 		return
 	}
-	screenRow := visualRow
-	if screenRow < 0 || screenRow >= layout.visibleRows {
-		return
+	style := vaxis.CursorStyle(vaxis.CursorBlock)
+	if d.mode == modeInsert {
+		style = vaxis.CursorBeam
+	}
+	win.ShowCursor(col, row, style)
+}
+
+func (d *diffViewer) commentCursorScreenPositionForLayout(layout commentEditorLayout, paintedHeight int, width int, height int) (int, int, bool) {
+	if d.editor == nil {
+		return 0, 0, false
+	}
+	visualRow, col, ok := d.editor.cursorDisplayPosition(layout.inputWidth)
+	if !ok {
+		return 0, 0, false
+	}
+	if visualRow < 0 || visualRow >= layout.visibleRows || visualRow+2 > paintedHeight {
+		return 0, 0, false
 	}
 	if col < 0 || col >= layout.inputWidth {
-		return
+		return 0, 0, false
 	}
-	if win.Vx != nil {
-		style := vaxis.CursorStyle(vaxis.CursorBlock)
-		if d.mode == modeInsert {
-			style = vaxis.CursorBeam
-		}
-		win.ShowCursor(layout.x+2+col, layout.y+1+screenRow, style)
+	screenCol := layout.x + 2 + col
+	screenRow := layout.y + 1 + visualRow
+	if screenCol < 0 || screenCol >= width || screenRow < d.topOccludedRows() || screenRow >= height {
+		return 0, 0, false
 	}
+	return screenCol, screenRow, true
 }
 
 func (d *diffViewer) commentEditorSegments(line commentDisplayLine, style vaxis.Style) []vaxis.Segment {
@@ -2478,12 +2521,11 @@ func (d *diffViewer) paintSideBySide(win vaxis.Window) {
 	if visible <= 0 {
 		return
 	}
-	end := minInt(len(rows), start+visible)
 	leftWidth, rightStart, rightWidth := d.sideBySidePaneGeometry(win)
 	separatorStyle := vaxis.Style{Foreground: d.scheme.Muted, Background: d.scheme.Background}
 
-	screenRow := 0
-	for index := start; index < end && screenRow < visible; index++ {
+	screenRow := -d.scrollOffset
+	for index := start; index < len(rows) && screenRow < visible; index++ {
 		sideRow := rows[index]
 		if sideRow.Full >= 0 {
 			docRow := sideRow.Full
@@ -2710,6 +2752,9 @@ func sideBySideContextSides(hasDeletes bool, hasAdds bool) (bool, bool) {
 
 func (d *diffViewer) sideBySideStart(rows []sideBySideRow) int {
 	for index, row := range rows {
+		if rowContainsDocRow(row, d.scroll) {
+			return index
+		}
 		if sideBySideRowFirstDoc(row) >= d.scroll {
 			return index
 		}
@@ -2778,7 +2823,7 @@ func (d *diffViewer) sideBySideCursorScreenPosition(width int, height int) (int,
 	start := d.sideBySideStart(rows)
 	visible := d.visibleRowCapacity()
 	leftWidth, rightStart, _ := d.sideBySidePaneGeometry(vaxis.Window{Width: width, Height: height})
-	screenRow := 0
+	screenRow := -d.scrollOffset
 	for index := start; index < len(rows) && screenRow < visible; index++ {
 		if !rowContainsDocRow(rows[index], d.cursor.Row) {
 			screenRow++
@@ -2789,7 +2834,7 @@ func (d *diffViewer) sideBySideCursorScreenPosition(width int, height int) (int,
 		}
 		if rows[index].Full == d.cursor.Row {
 			screenCol := d.screenColumn(d.rows[d.cursor.Row], d.cursor.Col)
-			if screenCol < 0 || screenCol >= width {
+			if screenRow < 0 || screenRow >= visible || screenCol < 0 || screenCol >= width {
 				return 0, 0, false
 			}
 			return screenCol, screenRow, true
@@ -2806,7 +2851,7 @@ func (d *diffViewer) sideBySideCursorScreenPosition(width int, height int) (int,
 			codeCol = 0
 		}
 		screenCol := paneStart + textCellWidth(d.sideBySideGutter(d.rows[d.cursor.Row], side)) + codeCol - d.xScroll
-		if screenCol < paneStart || screenCol >= paneStart+paneWidth || screenCol >= width {
+		if screenRow < 0 || screenRow >= visible || screenCol < paneStart || screenCol >= paneStart+paneWidth || screenCol >= width {
 			return 0, 0, false
 		}
 		return screenCol, screenRow, true
@@ -3062,7 +3107,7 @@ func (d *diffViewer) scrollbar(width int, height int) scrollbar {
 	}
 	trackHeight := d.verticalTrackHeight(width, height)
 	visibleRows := trackHeight
-	totalRows := len(d.rows)
+	totalRows := d.totalDisplayRowsForSize(width, height)
 	if width <= 0 || trackHeight <= 0 || totalRows <= visibleRows {
 		return scrollbar{}
 	}
@@ -3077,8 +3122,8 @@ func (d *diffViewer) scrollbar(width int, height int) scrollbar {
 
 	maxThumbTop := trackHeight - thumbSize
 	thumbTop := 0
-	if maxScroll := d.maxScroll(); maxScroll > 0 {
-		thumbTop = (d.scroll * maxThumbTop) / maxScroll
+	if maxScroll := d.maxDisplayScrollForSize(width, height); maxScroll > 0 {
+		thumbTop = (d.displayScrollPositionForSize(width, height) * maxThumbTop) / maxScroll
 	}
 
 	return scrollbar{
@@ -3519,7 +3564,7 @@ func (d *diffViewer) stackedMouseDocumentRow(mouse vaxis.Mouse) int {
 	if mouse.Row < 0 || mouse.Row >= d.visibleRowCapacity() {
 		return -1
 	}
-	screenRow := 0
+	screenRow := -d.scrollOffset
 	for docRow := d.scroll; docRow < len(d.rows) && screenRow < d.visibleRowCapacity(); docRow++ {
 		if mouse.Row == screenRow {
 			return docRow
@@ -3572,41 +3617,53 @@ func (d *diffViewer) sideBySideMouseCell(mouse vaxis.Mouse) (docRow int, localCo
 	}
 	rows := d.sideBySideRows()
 	start := d.sideBySideStart(rows)
-	index := start + mouse.Row
-	if index < 0 || index >= len(rows) {
-		return 0, 0, 0, false
-	}
+	visible := d.visibleRowCapacity()
 
-	sideRow := rows[index]
-	if sideRow.Full >= 0 {
-		return sideRow.Full, mouse.Col, d.codeOffset(d.rows[sideRow.Full]), true
-	}
+	for index, screenRow := start, -d.scrollOffset; index < len(rows) && screenRow < visible; index++ {
+		sideRow := rows[index]
+		if mouse.Row != screenRow {
+			screenRow++
+			for _, docRow := range sideBySideRowCommentDocRows(sideRow) {
+				commentRows := d.reviewDraftBoxRowsAfterRowForSize(docRow, d.width, d.height)
+				if mouse.Row >= screenRow && mouse.Row < screenRow+commentRows {
+					return 0, 0, 0, false
+				}
+				screenRow += commentRows
+			}
+			continue
+		}
 
-	leftWidth, rightStart, rightWidth := d.sideBySidePaneGeometry(vaxis.Window{Width: d.width, Height: d.height})
-	var side diffSide
-	paneStart := 0
-	paneWidth := leftWidth
-	switch {
-	case mouse.Col < leftWidth:
-		side = sideLeft
-	case mouse.Col >= rightStart && mouse.Col < rightStart+rightWidth:
-		side = sideRight
-		paneStart = rightStart
-		paneWidth = rightWidth
-	default:
-		return 0, 0, 0, false
-	}
-	if paneWidth <= 0 {
-		return 0, 0, 0, false
-	}
+		if sideRow.Full >= 0 {
+			return sideRow.Full, mouse.Col, d.codeOffset(d.rows[sideRow.Full]), true
+		}
 
-	docRow = sideBySideDocRowForSide(sideRow, side)
-	if docRow < 0 || docRow >= len(d.rows) {
-		return 0, 0, 0, false
+		leftWidth, rightStart, rightWidth := d.sideBySidePaneGeometry(vaxis.Window{Width: d.width, Height: d.height})
+		var side diffSide
+		paneStart := 0
+		paneWidth := leftWidth
+		switch {
+		case mouse.Col < leftWidth:
+			side = sideLeft
+		case mouse.Col >= rightStart && mouse.Col < rightStart+rightWidth:
+			side = sideRight
+			paneStart = rightStart
+			paneWidth = rightWidth
+		default:
+			return 0, 0, 0, false
+		}
+		if paneWidth <= 0 {
+			return 0, 0, 0, false
+		}
+
+		docRow = sideBySideDocRowForSide(sideRow, side)
+		if docRow < 0 || docRow >= len(d.rows) {
+			return 0, 0, 0, false
+		}
+		localCol = mouse.Col - paneStart
+		codeOffset = textCellWidth(d.sideBySideGutter(d.rows[docRow], side))
+		return docRow, localCol, codeOffset, true
 	}
-	localCol = mouse.Col - paneStart
-	codeOffset = textCellWidth(d.sideBySideGutter(d.rows[docRow], side))
-	return docRow, localCol, codeOffset, true
+	return 0, 0, 0, false
 }
 
 func (d *diffViewer) commentMouseHit(mouse vaxis.Mouse) (commentMouseHit, bool) {
@@ -3614,7 +3671,7 @@ func (d *diffViewer) commentMouseHit(mouse vaxis.Mouse) (commentMouseHit, bool) 
 		return commentMouseHit{}, false
 	}
 
-	screenRow := 0
+	screenRow := -d.scrollOffset
 	for docRow := d.scroll; docRow < len(d.rows) && screenRow < d.visibleRowCapacity(); docRow++ {
 		screenRow++
 		if d.editor != nil && d.commentEditorTargetRow() == docRow {
@@ -5478,13 +5535,36 @@ func reviewAnchorValid(anchor review.Anchor) bool {
 }
 
 func (d *diffViewer) clampScroll() {
-	maxScroll := d.maxScroll()
 	if d.scroll < 0 {
 		d.scroll = 0
 	}
-	if d.scroll > maxScroll {
-		d.scroll = maxScroll
+	if len(d.rows) == 0 {
+		d.scroll = 0
+		d.scrollOffset = 0
+		return
 	}
+	if d.scroll >= len(d.rows) {
+		d.scroll = len(d.rows) - 1
+	}
+	maxOffset := d.scrollRowDisplayHeightForSize(d.width, d.height) - 1
+	if maxOffset < 0 {
+		maxOffset = 0
+	}
+	if d.scrollOffset < 0 {
+		d.scrollOffset = 0
+	}
+	if d.scrollOffset > maxOffset {
+		d.scrollOffset = maxOffset
+	}
+	if position := d.displayScrollPositionForSize(d.width, d.height); position > d.maxDisplayScrollForSize(d.width, d.height) {
+		d.setDisplayScrollPositionForSize(d.maxDisplayScrollForSize(d.width, d.height), d.width, d.height)
+	}
+}
+
+func (d *diffViewer) setScrollRow(row int) {
+	d.scroll = row
+	d.scrollOffset = 0
+	d.clampScroll()
 }
 
 func (d *diffViewer) clampHorizontalScroll() {
@@ -5814,8 +5894,7 @@ func (d *diffViewer) setCursorAtCommit(row int) {
 	d.cursor = selectionPoint{Row: row, Col: 0}
 	d.clampCursor()
 	d.cursorGoal = d.cursor.Col
-	d.scroll = row
-	d.clampScroll()
+	d.setScrollRow(row)
 	d.ensureCursorColumnVisible()
 }
 
@@ -5952,13 +6031,19 @@ func (d *diffViewer) ensureCursorRowVisible() {
 	if visible > 0 {
 		if d.cursor.Row < d.scroll {
 			d.scroll = d.cursor.Row
+			d.scrollOffset = 0
 		}
 		if d.cursor.Row >= d.scroll+visible {
 			d.scroll = d.cursor.Row - visible + 1
+			d.scrollOffset = 0
 		}
 		d.clampScroll()
 		if _, ok := d.stickyFileHeader(); ok && d.cursor.Row == d.scroll && d.scroll > 0 {
 			d.scroll--
+			d.scrollOffset = 0
+		}
+		if screenRow := d.screenRowForDocRow(d.cursor.Row, d.width, d.height); screenRow < 0 {
+			d.setDisplayScrollPositionForSize(d.displayScrollPositionForSize(d.width, d.height)+screenRow, d.width, d.height)
 		}
 		d.ensureCursorDisplayRowVisible(visible)
 		d.ensureCommentEditorVisible(visible)
@@ -5972,13 +6057,23 @@ func (d *diffViewer) ensureCursorDisplayRowVisible(visible int) {
 	}
 	for {
 		screenRow := d.screenRowForDocRow(d.cursor.Row, d.width, d.height)
+		top := d.topOccludedRows()
+		if screenRow >= 0 && screenRow < top {
+			before := d.displayScrollPositionForSize(d.width, d.height)
+			d.setDisplayScrollPositionForSize(before+screenRow-top, d.width, d.height)
+			d.clampScroll()
+			if d.displayScrollPositionForSize(d.width, d.height) == before {
+				return
+			}
+			continue
+		}
 		if screenRow < visible {
 			return
 		}
-		before := d.scroll
-		d.scroll++
+		before := d.displayScrollPositionForSize(d.width, d.height)
+		d.setDisplayScrollPositionForSize(before+1, d.width, d.height)
 		d.clampScroll()
-		if d.scroll == before {
+		if d.displayScrollPositionForSize(d.width, d.height) == before {
 			return
 		}
 	}
@@ -5995,22 +6090,36 @@ func (d *diffViewer) ensureCommentEditorVisible(visible int) {
 	}
 	targetRow := d.commentEditorTargetRow()
 	if cursorRow >= visible {
-		d.scroll += cursorRow - visible + 1
+		d.setDisplayScrollPositionForSize(
+			d.displayScrollPositionForSize(d.width, d.height)+cursorRow-visible+1,
+			d.width,
+			d.height,
+		)
 	}
 	if cursorRow < 0 {
-		d.scroll += cursorRow
+		d.setDisplayScrollPositionForSize(
+			d.displayScrollPositionForSize(d.width, d.height)+cursorRow,
+			d.width,
+			d.height,
+		)
 	}
 	editorHeight := d.commentEditorHeightForSize(d.width, d.height)
 	targetScreenRow := d.screenRowForDocRow(targetRow, d.width, d.height)
 	editorBottom := targetScreenRow + 1 + editorHeight
 	if editorHeight > 0 && editorBottom > visible {
-		d.scroll += editorBottom - visible
+		d.setDisplayScrollPositionForSize(
+			d.displayScrollPositionForSize(d.width, d.height)+editorBottom-visible,
+			d.width,
+			d.height,
+		)
 	}
 	if targetRow >= 0 && d.scroll > targetRow {
 		d.scroll = targetRow
+		d.scrollOffset = 0
 	}
 	if d.scroll < 0 {
 		d.scroll = 0
+		d.scrollOffset = 0
 	}
 }
 
@@ -6022,7 +6131,7 @@ func (d *diffViewer) commentEditorCursorScreenRowForSize(width int, height int) 
 	if targetRow < 0 {
 		return 0, false
 	}
-	layout, ok := d.commentEditorLayout(width, height)
+	layout, ok := d.commentEditorLayoutForSize(width, height, false)
 	if !ok {
 		return 0, false
 	}
@@ -6111,11 +6220,125 @@ func (d *diffViewer) maxScrollForVisibleRows(visible int, width int, height int)
 }
 
 func (d *diffViewer) totalDisplayRowsForSize(width int, height int) int {
+	if d.layoutMode == layoutSideBySide {
+		total := 0
+		for _, row := range d.sideBySideRows() {
+			total += d.sideBySideRowDisplayHeightForSize(row, width, height)
+		}
+		return total
+	}
 	rows := len(d.rows)
 	for row := range d.rows {
 		rows += d.reviewDraftBoxRowsAfterRowForSize(row, width, height)
 	}
 	return rows
+}
+
+func (d *diffViewer) rowDisplayHeightForSize(row int, width int, height int) int {
+	if row < 0 || row >= len(d.rows) {
+		return 0
+	}
+	return 1 + d.reviewDraftBoxRowsAfterRowForSize(row, width, height)
+}
+
+func (d *diffViewer) sideBySideRowDisplayHeightForSize(row sideBySideRow, width int, height int) int {
+	rows := 1
+	for _, docRow := range sideBySideRowCommentDocRows(row) {
+		rows += d.reviewDraftBoxRowsAfterRowForSize(docRow, width, height)
+	}
+	return rows
+}
+
+func (d *diffViewer) scrollRowDisplayHeightForSize(width int, height int) int {
+	if d.layoutMode == layoutSideBySide {
+		rows := d.sideBySideRows()
+		if len(rows) == 0 {
+			return 0
+		}
+		return d.sideBySideRowDisplayHeightForSize(rows[d.sideBySideStart(rows)], width, height)
+	}
+	return d.rowDisplayHeightForSize(d.scroll, width, height)
+}
+
+func (d *diffViewer) maxDisplayScrollForSize(width int, height int) int {
+	_, horizontalVisible := d.scrollbarVisibility(width, height)
+	visible := visibleRowCapacity(height, horizontalVisible)
+	maxScroll := d.totalDisplayRowsForSize(width, height) - visible
+	if maxScroll < 0 {
+		return 0
+	}
+	return maxScroll
+}
+
+func (d *diffViewer) displayScrollPositionForSize(width int, height int) int {
+	if d.layoutMode == layoutSideBySide {
+		rows := d.sideBySideRows()
+		start := d.sideBySideStart(rows)
+		position := 0
+		for index := 0; index < start; index++ {
+			position += d.sideBySideRowDisplayHeightForSize(rows[index], width, height)
+		}
+		return position + d.scrollOffset
+	}
+	if d.scroll <= 0 {
+		return d.scrollOffset
+	}
+	position := 0
+	for row := 0; row < d.scroll && row < len(d.rows); row++ {
+		position += d.rowDisplayHeightForSize(row, width, height)
+	}
+	return position + d.scrollOffset
+}
+
+func (d *diffViewer) setDisplayScrollPositionForSize(position int, width int, height int) {
+	if len(d.rows) == 0 {
+		d.scroll = 0
+		d.scrollOffset = 0
+		return
+	}
+	if position < 0 {
+		position = 0
+	}
+	maxScroll := d.maxDisplayScrollForSize(width, height)
+	if position > maxScroll {
+		position = maxScroll
+	}
+	if d.layoutMode == layoutSideBySide {
+		rows := d.sideBySideRows()
+		for _, row := range rows {
+			rowHeight := d.sideBySideRowDisplayHeightForSize(row, width, height)
+			if rowHeight <= 0 {
+				rowHeight = 1
+			}
+			if position < rowHeight {
+				d.scroll = maxInt(sideBySideRowFirstDoc(row), 0)
+				d.scrollOffset = position
+				return
+			}
+			position -= rowHeight
+		}
+		if len(rows) > 0 {
+			d.scroll = maxInt(sideBySideRowFirstDoc(rows[len(rows)-1]), 0)
+		} else {
+			d.scroll = len(d.rows) - 1
+		}
+		d.scrollOffset = 0
+		return
+	}
+	for row := range d.rows {
+		rowHeight := d.rowDisplayHeightForSize(row, width, height)
+		if rowHeight <= 0 {
+			rowHeight = 1
+		}
+		if position < rowHeight {
+			d.scroll = row
+			d.scrollOffset = position
+			return
+		}
+		position -= rowHeight
+	}
+	d.scroll = len(d.rows) - 1
+	d.scrollOffset = 0
 }
 
 func (d *diffViewer) commentEditorHeightForSize(width int, height int) int {
@@ -6148,34 +6371,14 @@ func (d *diffViewer) visibleRowCapacity() int {
 }
 
 func (d *diffViewer) scrollBy(delta int) {
-	d.scroll += delta
+	d.setDisplayScrollPositionForSize(d.displayScrollPositionForSize(d.width, d.height)+delta, d.width, d.height)
 	d.clampScroll()
-	d.clampCursorToVisibleRows()
 	d.cursorGoal = d.cursor.Col
 }
 
 func (d *diffViewer) scrollHorizontallyBy(delta int) {
 	d.xScroll += delta
 	d.clampHorizontalScroll()
-}
-
-func (d *diffViewer) clampCursorToVisibleRows() {
-	visible := d.visibleRowCapacity()
-	if visible <= 0 {
-		d.clampCursor()
-		return
-	}
-	if d.cursor.Row < d.scroll {
-		d.cursor.Row = d.scroll
-	}
-	lastVisible := d.scroll + visible - 1
-	if d.cursor.Row > lastVisible {
-		d.cursor.Row = lastVisible
-	}
-	if _, ok := d.stickyFileHeader(); ok && d.cursor.Row == d.scroll && d.scroll > 0 && d.cursor.Row+1 < len(d.rows) {
-		d.cursor.Row++
-	}
-	d.clampCursor()
 }
 
 func (d *diffViewer) halfPage() int {
