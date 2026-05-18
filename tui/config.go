@@ -29,15 +29,33 @@ func loadConfig() Config {
 	}
 	var cfg Config
 	_ = json.Unmarshal(data, &cfg)
+	cfg.CommentFile = expandHomePath(cfg.CommentFile)
 	return cfg
 }
 
 func configFilePath() string {
 	if xdg := os.Getenv("XDG_CONFIG_HOME"); xdg != "" {
-		return filepath.Join(xdg, "comview", "config.json")
+		return filepath.Join(expandHomePath(xdg), "comview", "config.json")
 	}
 	home, _ := os.UserHomeDir()
 	return filepath.Join(home, ".config", "comview", "config.json")
+}
+
+func expandHomePath(path string) string {
+	if path == "~" {
+		home, err := os.UserHomeDir()
+		if err == nil {
+			return home
+		}
+		return path
+	}
+	if len(path) >= 2 && path[0] == '~' && os.IsPathSeparator(path[1]) {
+		home, err := os.UserHomeDir()
+		if err == nil {
+			return filepath.Join(home, path[2:])
+		}
+	}
+	return path
 }
 
 // defaultKeybindings maps action names to their default key strings.
