@@ -2449,7 +2449,7 @@ func (d *diffViewer) printRowWrapped(win vaxis.Window, startRow int, docRow int,
 		sr := startRow + i
 		d.fillRowBackground(win, sr, diffRow.Kind, cursorLine)
 		d.fillCodeBackground(win, sr, codeOffset, diffRow.Kind, cursorLine)
-		printCodeSegmentsAtOffset(win, codeOffset, sr, avail*i, segs...)
+		printCodeSegmentsAtOffset(win, codeOffset, sr, avail*i, tabWidthForFile(diffRow.FileName), segs...)
 	}
 	return nLines
 }
