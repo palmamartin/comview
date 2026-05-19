@@ -2525,7 +2525,7 @@ func (d *diffViewer) printRowWrapped(win vaxis.Window, startRow int, docRow int,
 	if avail <= 0 {
 		return 1
 	}
-	codeWidth := textCellWidth(diffRow.Code)
+	codeWidth := codeCellWidth(diffRow)
 	if codeWidth <= avail {
 		return 1
 	}
@@ -6440,7 +6440,7 @@ func (d *diffViewer) wrappedDocRowHeight(docRow int, viewportWidth int) int {
 	if avail <= 0 {
 		return 1
 	}
-	codeWidth := textCellWidth(row.Code)
+	codeWidth := codeCellWidth(row)
 	if codeWidth <= avail {
 		return 1
 	}

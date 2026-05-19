@@ -3593,6 +3593,22 @@ func TestDiffViewerLineBoundaryKeys(t *testing.T) {
 	}
 }
 
+func TestDiffViewerWrappedRowHeightUsesFileTabWidth(t *testing.T) {
+	row := diff.Row{
+		Kind:     diff.RowAdd,
+		FileName: "main.py",
+		Code:     "\t123456",
+	}
+	viewer := &diffViewer{
+		rows:      []diff.Row{row},
+		wrapLines: true,
+	}
+
+	if got, want := viewer.wrappedDocRowHeight(0, 10), 1; got != want {
+		t.Fatalf("wrapped row height = %d, want %d", got, want)
+	}
+}
+
 func TestDiffViewerWrapModeScrollbarHandlesDrafts(t *testing.T) {
 	row := diff.Row{
 		Kind:   diff.RowAdd,
