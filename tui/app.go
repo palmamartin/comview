@@ -6673,7 +6673,7 @@ func (d *diffViewer) scrollbarVisibility(width int, height int) (vertical bool, 
 	if width <= 0 || height <= 1 {
 		return false, false
 	}
-	if d.wrapLines {
+	if d.wrapLines && d.layoutMode != layoutSideBySide {
 		visible := visibleRowCapacity(height, false)
 		totalRows := d.totalDisplayRowsForViewport(width, height)
 		vertical = totalRows > visible

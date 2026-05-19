@@ -3741,6 +3741,27 @@ func TestDiffViewerSideBySideHorizontalNavigationUsesPaneWidth(t *testing.T) {
 	}
 }
 
+func TestDiffViewerWrapModeDoesNotHideSideBySideHorizontalScrollbar(t *testing.T) {
+	row := diff.Row{
+		Kind:   diff.RowAdd,
+		Gutter: "    1 + ",
+		Code:   strings.Repeat("x", 60),
+	}
+	row.Text = row.Gutter + row.Code
+	viewer := &diffViewer{
+		rows:       []diff.Row{row},
+		layoutMode: layoutSideBySide,
+		wrapLines:  true,
+	}
+	viewer.Layout(Tight(Size{Width: 80, Height: 10}))
+
+	bar := viewer.horizontalScrollbar(80, 10)
+
+	if !bar.Visible {
+		t.Fatal("horizontal scrollbar hidden, want side-by-side overflow unaffected by wrap mode")
+	}
+}
+
 func TestDiffViewerSideBySideHorizontalScrollbarUsesPaneWidth(t *testing.T) {
 	row := diff.Row{
 		Kind:   diff.RowAdd,
