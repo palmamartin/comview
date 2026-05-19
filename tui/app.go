@@ -1018,17 +1018,18 @@ func (d *diffViewer) cursorScreenPositionForSize(width int, height int) (int, in
 		return 0, 0, false
 	}
 
-	screenRow := d.screenRowForDocRow(d.cursor.Row, width, height)
-	if screenRow < d.topOccludedRows() || screenRow >= d.visibleRowCapacity() || screenRow >= height {
-		return 0, 0, false
-	}
-
 	verticalVisible, _ := d.scrollbarVisibility(width, height)
 	viewportWidth := horizontalViewportWidth(width, verticalVisible)
 	if viewportWidth <= 0 || !d.cursorColumnInViewport(d.rows[d.cursor.Row], viewportWidth) {
 		return 0, 0, false
 	}
-	screenCol := d.screenColumn(d.rows[d.cursor.Row], d.cursor.Col)
+	screenRow, screenCol, ok := d.cursorDisplayPositionForSize(width, height)
+	if !ok {
+		return 0, 0, false
+	}
+	if screenRow < d.topOccludedRows() || screenRow >= d.visibleRowCapacity() || screenRow >= height {
+		return 0, 0, false
+	}
 	if screenCol < 0 || screenCol >= viewportWidth {
 		return 0, 0, false
 	}
@@ -1086,7 +1087,48 @@ func (d *diffViewer) cursorColumnInViewport(row diff.Row, viewportWidth int) boo
 		return false
 	}
 	codeCol := d.cursor.Col - codeOffset
+	if d.wrapLines && d.layoutMode != layoutSideBySide {
+		return codeCol >= 0 && codeCol <= codeCellWidth(row)
+	}
 	return codeCol >= d.xScroll && codeCol < d.xScroll+codeViewportWidth
+}
+
+func (d *diffViewer) cursorDisplayPositionForSize(width int, height int) (int, int, bool) {
+	if d.cursor.Row < d.scroll || d.cursor.Row >= len(d.rows) {
+		return 0, 0, false
+	}
+	row := d.rows[d.cursor.Row]
+	screenRow := d.screenRowForDocRow(d.cursor.Row, width, height)
+	screenCol := d.screenColumn(row, d.cursor.Col)
+	if !d.wrapLines || d.layoutMode == layoutSideBySide {
+		return screenRow, screenCol, true
+	}
+	verticalVisible, _ := d.scrollbarVisibility(width, height)
+	viewportWidth := horizontalViewportWidth(width, verticalVisible)
+	rowOffset, col, ok := d.wrappedCursorOffset(row, viewportWidth)
+	if !ok {
+		return 0, 0, false
+	}
+	return screenRow + rowOffset, col, true
+}
+
+func (d *diffViewer) wrappedCursorOffset(row diff.Row, viewportWidth int) (int, int, bool) {
+	if row.Code == "" || row.Kind == diff.RowHunk {
+		return 0, d.cursor.Col, d.cursor.Col >= 0 && d.cursor.Col < viewportWidth
+	}
+	codeOffset := d.codeOffset(row)
+	if d.cursor.Col < codeOffset {
+		return 0, d.cursor.Col, d.cursor.Col >= 0 && d.cursor.Col < viewportWidth
+	}
+	avail := viewportWidth - codeOffset
+	if avail <= 0 {
+		return 0, 0, false
+	}
+	codeCol := d.cursor.Col - codeOffset
+	if codeCol < 0 || codeCol > codeCellWidth(row) {
+		return 0, 0, false
+	}
+	return codeCol / avail, codeOffset + codeCol%avail, true
 }
 
 func (d *diffViewer) codeOffset(row diff.Row) int {
@@ -6155,7 +6197,10 @@ func (d *diffViewer) ensureCursorDisplayRowVisible(visible int) {
 		return
 	}
 	for {
-		screenRow := d.screenRowForDocRow(d.cursor.Row, d.width, d.height)
+		screenRow, _, ok := d.cursorDisplayPositionForSize(d.width, d.height)
+		if !ok {
+			return
+		}
 		top := d.topOccludedRows()
 		if screenRow >= 0 && screenRow < top {
 			before := d.displayScrollPositionForSize(d.width, d.height)

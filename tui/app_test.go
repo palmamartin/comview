@@ -3593,6 +3593,52 @@ func TestDiffViewerLineBoundaryKeys(t *testing.T) {
 	}
 }
 
+func TestDiffViewerWrapModePlacesCursorOnContinuationRow(t *testing.T) {
+	row := diff.Row{
+		Kind:   diff.RowAdd,
+		Gutter: "    1 + ",
+		Code:   strings.Repeat("x", 30),
+	}
+	viewer := &diffViewer{
+		rows:      []diff.Row{row},
+		cursor:    selectionPoint{Row: 0, Col: testCodeOffset(row) + 14},
+		wrapLines: true,
+	}
+	viewer.Layout(Tight(Size{Width: 20, Height: 10}))
+
+	col, rowNum, ok := viewer.cursorScreenPositionForSize(20, 10)
+	if !ok {
+		t.Fatal("cursor position not found")
+	}
+	if got, want := rowNum, 1; got != want {
+		t.Fatalf("cursor screen row = %d, want %d", got, want)
+	}
+	if got, want := col, testCodeOffset(row)+2; got != want {
+		t.Fatalf("cursor screen col = %d, want %d", got, want)
+	}
+}
+
+func TestDiffViewerWrapModeScrollsCursorContinuationRowIntoView(t *testing.T) {
+	row := diff.Row{
+		Kind:   diff.RowAdd,
+		Gutter: "    1 + ",
+		Code:   strings.Repeat("x", 40),
+	}
+	viewer := &diffViewer{
+		rows:      []diff.Row{row},
+		cursor:    selectionPoint{Row: 0, Col: testCodeOffset(row) + 30},
+		wrapLines: true,
+	}
+	viewer.Layout(Tight(Size{Width: 20, Height: 3}))
+
+	viewer.ensureCursorRowVisible()
+
+	_, _, ok := viewer.cursorScreenPositionForSize(20, 3)
+	if !ok {
+		t.Fatal("cursor continuation row was not scrolled into view")
+	}
+}
+
 func TestDiffViewerWrapModeIgnoresStaleHorizontalScrollForScreenColumns(t *testing.T) {
 	row := diff.Row{
 		Kind:   diff.RowAdd,
