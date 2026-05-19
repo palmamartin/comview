@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -2181,11 +2182,70 @@ func TestDiffViewerCommentEditorWrapsLongLines(t *testing.T) {
 	if len(wrapped) != 2 {
 		t.Fatalf("wrapped line count = %d, want 2", len(wrapped))
 	}
-	if got, want := wrapped[0].text(editor.lines), "hello "; got != want {
+	if got, want := wrapped[0].text(editor.lines), "hello w"; got != want {
 		t.Fatalf("first wrapped line = %q, want %q", got, want)
 	}
-	if got, want := wrapped[1].text(editor.lines), "world"; got != want {
+	if got, want := wrapped[1].text(editor.lines), "orld"; got != want {
 		t.Fatalf("second wrapped line = %q, want %q", got, want)
+	}
+}
+
+func TestDiffViewerCommentEditorWrapsLikeReadOnlyDraftBox(t *testing.T) {
+	tests := []struct {
+		name  string
+		body  string
+		width int
+	}{
+		{
+			name:  "empty body",
+			body:  "",
+			width: 6,
+		},
+		{
+			name:  "exact width",
+			body:  "abcdef",
+			width: 6,
+		},
+		{
+			name:  "one over exact width",
+			body:  "abcdefg",
+			width: 6,
+		},
+		{
+			name:  "spaces do not change wrapping",
+			body:  "hello world",
+			width: 7,
+		},
+		{
+			name:  "multiple spaces at boundary",
+			body:  "abc  def",
+			width: 5,
+		},
+		{
+			name:  "explicit newline",
+			body:  "first line\nsecond",
+			width: 6,
+		},
+		{
+			name:  "wide character",
+			body:  "ab界cd",
+			width: 4,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			editor := &commentEditor{lines: strings.Split(tt.body, "\n")}
+			wrapped := editor.wrappedLines(tt.width)
+			got := make([]string, len(wrapped))
+			for i, line := range wrapped {
+				got[i] = line.text(editor.lines)
+			}
+			want := commentBodyDisplayLines(tt.body, tt.width)
+			if !reflect.DeepEqual(got, want) {
+				t.Fatalf("editable wrapped lines = %#v, want read-only lines %#v", got, want)
+			}
+		})
 	}
 }
 

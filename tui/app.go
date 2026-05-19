@@ -5352,16 +5352,12 @@ func commentEditorWrapWidth(width int) int {
 func wrappedLineEnd(runes []rune, start int, width int) int {
 	col := 0
 	end := start
-	lastSpace := -1
 	for end < len(runes) {
 		next := col + graphemeCellWidth(string(runes[end]))
 		if next > width && end > start {
 			break
 		}
 		col = next
-		if uucode.IsSpace(runes[end]) {
-			lastSpace = end
-		}
 		end++
 		if col >= width {
 			break
@@ -5369,9 +5365,6 @@ func wrappedLineEnd(runes []rune, start int, width int) int {
 	}
 	if end == start {
 		return start + 1
-	}
-	if end < len(runes) && lastSpace >= start {
-		return lastSpace + 1
 	}
 	return end
 }
