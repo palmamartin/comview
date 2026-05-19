@@ -5516,12 +5516,12 @@ func TestDiffViewerSelectionPreservesInlineReviewUnderline(t *testing.T) {
 	}
 	viewer.ensureColorScheme()
 
-	style := viewer.selectionCellStyle(row, testCodeOffset(row)+1, viewer.selectionStyle())
+	style := viewer.selectionCellStyle(row, testCodeOffset(row)+1, viewer.baseStyle(), viewer.selectionStyle())
 	if style.UnderlineStyle != vaxis.UnderlineCurly || style.UnderlineColor != viewer.scheme.Yellow {
 		t.Fatalf("selected inline style = %+v", style)
 	}
 
-	style = viewer.selectionCellStyle(row, testCodeOffset(row), viewer.selectionStyle())
+	style = viewer.selectionCellStyle(row, testCodeOffset(row), viewer.baseStyle(), viewer.selectionStyle())
 	if style.UnderlineStyle != vaxis.UnderlineOff {
 		t.Fatalf("selected non-inline style = %+v, want no underline", style)
 	}
@@ -5863,6 +5863,37 @@ func TestDiffViewerSideBySideSelectionPaintsCodeCell(t *testing.T) {
 	}
 	if cell.Background != viewer.scheme.Selection {
 		t.Fatalf("selected cell style = %+v, want selection background %v", cell.Style, viewer.scheme.Selection)
+	}
+}
+
+func TestDiffViewerSideBySideSelectionPreservesTextAttributes(t *testing.T) {
+	row := diff.Row{Kind: diff.RowContext, Gutter: "    11   ", Code: "strong"}
+	row.Text = row.Gutter + row.Code
+	viewer := &diffViewer{
+		rows: []diff.Row{row},
+		codeSegments: [][]vaxis.Segment{{
+			{Text: "strong", Style: vaxis.Style{Attribute: vaxis.AttrBold | vaxis.AttrItalic, UnderlineStyle: vaxis.UnderlineSingle}},
+		}},
+		selection: textSelection{
+			Active: true,
+			Anchor: selectionPoint{Row: 0, Col: testCodeOffset(row)},
+			Cursor: selectionPoint{Row: 0, Col: testCodeOffset(row)},
+		},
+	}
+	viewer.ensureColorScheme()
+	cells := testCells{}
+
+	viewer.paintSideBySideSelectionCells(cells, 24, 0, row, textCellWidth(viewer.sideBySideGutter(row, sideRight)))
+
+	cell := cells[textCellWidth(viewer.sideBySideGutter(row, sideRight))]
+	if cell.Attribute&(vaxis.AttrBold|vaxis.AttrItalic) != vaxis.AttrBold|vaxis.AttrItalic {
+		t.Fatalf("selected cell attribute = %v, want bold and italic", cell.Attribute)
+	}
+	if cell.UnderlineStyle != vaxis.UnderlineSingle {
+		t.Fatalf("selected cell underline = %v, want single", cell.UnderlineStyle)
+	}
+	if cell.Background != viewer.scheme.Selection {
+		t.Fatalf("selected cell background = %v, want %v", cell.Background, viewer.scheme.Selection)
 	}
 }
 

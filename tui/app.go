@@ -2918,9 +2918,10 @@ func (d *diffViewer) paintSideBySideSelectionCells(dst cellSetter, width int, do
 		if docCol < spec.startCol || docCol >= spec.endCol {
 			continue
 		}
+		baseStyle := d.selectionBaseStyleAt(docRow, row, docCol, false)
 		dst.SetCell(screenCol, 0, vaxis.Cell{
 			Character: characterAtCellWithTabWidth(row.Code, docCol-rowCodeOffset, tabWidthForFile(row.FileName)),
-			Style:     d.selectionCellStyle(row, docCol, spec.style),
+			Style:     d.selectionCellStyle(row, docCol, baseStyle, spec.style),
 		})
 	}
 }
@@ -4173,9 +4174,10 @@ func (d *diffViewer) paintSelection(win vaxis.Window, screenRow int, docRow int)
 	for screenCol := 0; screenCol < width; screenCol++ {
 		docCol := d.documentColumn(spec.row, screenCol)
 		if docCol >= spec.startCol && docCol < spec.endCol {
+			baseStyle := d.selectionBaseStyleAt(docRow, spec.row, docCol, docRow == d.cursor.Row)
 			win.SetCell(screenCol, screenRow, vaxis.Cell{
 				Character: rowCharacterAtCell(spec.row, docCol),
-				Style:     d.selectionCellStyle(spec.row, docCol, spec.style),
+				Style:     d.selectionCellStyle(spec.row, docCol, baseStyle, spec.style),
 			})
 		}
 	}
@@ -4218,11 +4220,49 @@ func (d *diffViewer) selectionPaintSpec(docRow int, now time.Time) (selectionPai
 	}, true
 }
 
-func (d *diffViewer) selectionCellStyle(row diff.Row, docCol int, style vaxis.Style) vaxis.Style {
+func (d *diffViewer) selectionBaseStyleAt(docRow int, row diff.Row, docCol int, cursorLine bool) vaxis.Style {
+	if codeStart, _, ok := d.codeRange(row); ok && row.Code != "" && docCol >= codeStart {
+		segments := d.reviewSegments(row, d.codeSegmentsForRow(docRow))
+		segments = d.searchSegments(docRow, row, segments)
+		segments = d.rowSegments(segments, cursorLine)
+		return styleAtCellWithTabWidth(segments, docCol-codeStart, tabWidthForFile(row.FileName), d.codeStyle(row.Kind))
+	}
+	if row.Gutter != "" || row.Marker != "" {
+		segments := d.rowSegments(d.gutterSegments(row), cursorLine)
+		return styleAtCell(segments, docCol, d.gutterStyle(row.Kind))
+	}
+	if segments, ok := d.structuredSegments(row); ok {
+		segments = d.searchSegments(docRow, row, segments)
+		segments = d.rowSegments(segments, cursorLine)
+		return styleAtCell(segments, docCol, d.styleFor(row.Kind))
+	}
+	return d.rowStyle(d.styleFor(row.Kind), cursorLine)
+}
+
+func (d *diffViewer) selectionCellStyle(row diff.Row, docCol int, baseStyle vaxis.Style, selectionStyle vaxis.Style) vaxis.Style {
+	style := applySelectionStyle(baseStyle, selectionStyle)
 	if d.hasInlineReviewAt(row, docCol) {
 		style.UnderlineColor = d.scheme.Yellow
 		style.UnderlineStyle = vaxis.UnderlineCurly
 	}
+	return style
+}
+
+func applySelectionStyle(baseStyle vaxis.Style, selectionStyle vaxis.Style) vaxis.Style {
+	style := baseStyle
+	if selectionStyle.Foreground != vaxis.ColorDefault {
+		style.Foreground = selectionStyle.Foreground
+	}
+	if selectionStyle.Background != vaxis.ColorDefault {
+		style.Background = selectionStyle.Background
+	}
+	if selectionStyle.UnderlineColor != vaxis.ColorDefault {
+		style.UnderlineColor = selectionStyle.UnderlineColor
+	}
+	if selectionStyle.UnderlineStyle != vaxis.UnderlineOff {
+		style.UnderlineStyle = selectionStyle.UnderlineStyle
+	}
+	style.Attribute |= selectionStyle.Attribute
 	return style
 }
 
@@ -7282,6 +7322,26 @@ func styleSegmentsRangeFullWithTabWidth(segments []vaxis.Segment, start int, end
 		}
 	}
 	return styled
+}
+
+func styleAtCell(segments []vaxis.Segment, cell int, fallback vaxis.Style) vaxis.Style {
+	return styleAtCellWithTabWidth(segments, cell, defaultTabWidth, fallback)
+}
+
+func styleAtCellWithTabWidth(segments []vaxis.Segment, cell int, tabWidth int, fallback vaxis.Style) vaxis.Style {
+	col := 0
+	for _, segment := range segments {
+		it := uucode.NewGraphemeIterator(segment.Text)
+		for g, ok := it.Next(); ok; g, ok = it.Next() {
+			grapheme := segment.Text[g.Start:g.End]
+			next := col + characterForGraphemeWithTabWidth(grapheme, tabWidth).Width
+			if cell >= col && cell < next {
+				return segment.Style
+			}
+			col = next
+		}
+	}
+	return fallback
 }
 
 func appendSegment(segments []vaxis.Segment, segment vaxis.Segment) []vaxis.Segment {
