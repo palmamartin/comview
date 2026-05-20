@@ -2,7 +2,6 @@ package main
 
 import (
 	"reflect"
-	"strings"
 	"testing"
 )
 
@@ -39,19 +38,5 @@ func TestWatchCommandAcceptsCustomCommandAfterSeparator(t *testing.T) {
 func TestWatchCommandRequiresCommandAfterSeparator(t *testing.T) {
 	if _, err := watchCommand([]string{"--"}); err == nil {
 		t.Fatal("watchCommand() error = nil, want error")
-	}
-}
-
-func TestPrintableANSIOutputDropsEscapeSequences(t *testing.T) {
-	input := "diff --git a/main.go b/main.go\n\x1b[31m-old\x1b[0m\n\x1b]8;;https://example.com\x1b\\+new\x1b]8;;\x1b\\\n"
-	if got, want := printableANSIOutput(strings.NewReader(input)), "diff --git a/main.go b/main.go\n-old\n+new\n"; got != want {
-		t.Fatalf("printableANSIOutput() = %q, want %q", got, want)
-	}
-}
-
-func TestPrintableANSIOutputPreservesTabs(t *testing.T) {
-	input := "+\tindented\n"
-	if got, want := printableANSIOutput(strings.NewReader(input)), input; got != want {
-		t.Fatalf("printableANSIOutput() = %q, want %q", got, want)
 	}
 }

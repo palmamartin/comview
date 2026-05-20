@@ -2,11 +2,9 @@ package main
 
 import (
 	"fmt"
-	"io"
 	"os"
-	"strings"
 
-	"git.sr.ht/~rockorager/vaxis/ansi"
+	"github.com/rockorager/comview/internal/terminal"
 	"github.com/rockorager/comview/tui"
 )
 
@@ -60,22 +58,5 @@ func readPipe() (string, error) {
 		return "", nil
 	}
 
-	return printableANSIOutput(os.Stdin), nil
-}
-
-func printableANSIOutput(input io.Reader) string {
-	parser := ansi.NewParser(input, ansi.ParserModeOutput)
-	var output strings.Builder
-	for seq := range parser.Next() {
-		switch seq := seq.(type) {
-		case ansi.Print:
-			output.WriteString(seq.Grapheme)
-		case ansi.C0:
-			switch rune(seq) {
-			case '\n', '\r', '\t':
-				output.WriteRune(rune(seq))
-			}
-		}
-	}
-	return output.String()
+	return terminal.PrintableANSIOutput(os.Stdin), nil
 }

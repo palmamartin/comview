@@ -13,6 +13,7 @@ import (
 	"git.sr.ht/~rockorager/vaxis"
 
 	"github.com/rockorager/comview/diff"
+	"github.com/rockorager/comview/internal/terminal"
 )
 
 const defaultWatchInterval = 750 * time.Millisecond
@@ -79,14 +80,14 @@ func postCommandOutput(ctx context.Context, vx *vaxis.Vaxis, command []string, l
 		return
 	}
 
-	hash := sha256.Sum256(append([]byte("output:"), output...))
+	hash := sha256.Sum256([]byte("output:" + output))
 	if *haveHash && hash == *lastHash {
 		return
 	}
 	*lastHash = hash
 	*haveHash = true
 
-	rows, err := rowsForInput(string(output))
+	rows, err := rowsForInput(output)
 	if ctx.Err() != nil {
 		return
 	}
@@ -107,18 +108,18 @@ func postCommandOutput(ctx context.Context, vx *vaxis.Vaxis, command []string, l
 	})
 }
 
-func runWatchCommand(ctx context.Context, command []string) ([]byte, error) {
+func runWatchCommand(ctx context.Context, command []string) (string, error) {
 	cmd := exec.CommandContext(ctx, command[0], command[1:]...)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	output, err := cmd.Output()
 	if err == nil {
-		return output, nil
+		return terminal.PrintableANSIOutput(bytes.NewReader(output)), nil
 	}
 
-	message := strings.TrimSpace(stderr.String())
+	message := strings.TrimSpace(terminal.PrintableANSIOutput(&stderr))
 	if message == "" {
 		message = err.Error()
 	}
-	return nil, errors.New(message)
+	return "", errors.New(message)
 }
