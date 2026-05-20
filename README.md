@@ -33,7 +33,8 @@ comview watch -- git show HEAD
 output changes. Arguments after `watch` are passed to `git diff`; use `--` to
 watch another diff-producing command.
 
-Comments are saved to `.comview/comments.json`.
+Comments are saved to `.comview/comments.json`. Viewed files are saved to
+`.comview/viewed.json`.
 
 ## Keybinds
 
@@ -49,6 +50,7 @@ Comments are saved to `.comview/comments.json`.
 | `s` | Toggle side-by-side view |
 | `t` | Choose theme |
 | `<space>e` | Find file in diff |
+| `<space>v` | Mark file viewed/unviewed |
 | `/` | Search |
 | `n` / `N` | Next / previous search result |
 | `o` | Open cursor location in editor |

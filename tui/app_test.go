@@ -251,6 +251,181 @@ diff --git a/second.go b/second.go
 	}
 }
 
+func TestDiffViewerSpaceVMarksAndUnmarksViewedFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), ".comview", "viewed.json")
+	rows := viewedTestRows(t, "2222222")
+	viewer := &diffViewer{rows: rows, cursor: selectionPoint{Row: 3}, viewedFile: path}
+
+	cmd := pressSpaceV(t, viewer)
+	if cmd != CommandRedraw {
+		t.Fatalf("mark command = %v, want redraw", cmd)
+	}
+	if got, want := viewer.statusMessage, "File marked viewed."; got != want {
+		t.Fatalf("status = %q, want %q", got, want)
+	}
+	if !viewer.fileViewed("main.go", "2222222") {
+		t.Fatal("viewer state did not mark file viewed")
+	}
+	if got, want := len(viewer.rows), 1; got != want {
+		t.Fatalf("visible rows = %d, want %d", got, want)
+	}
+	if got, want := viewer.cursor.Row, 0; got != want {
+		t.Fatalf("cursor row = %d, want file header", got)
+	}
+	if got, want := viewer.displayRowText(viewer.rows[0]), "✓ main.go"; got != want {
+		t.Fatalf("display row = %q, want %q", got, want)
+	}
+	file, err := review.LoadViewedFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !file.IsViewed("main.go", "2222222") {
+		t.Fatalf("saved viewed file = %+v, want main.go hash", file)
+	}
+
+	cmd = pressSpaceV(t, viewer)
+	if cmd != CommandRedraw {
+		t.Fatalf("unmark command = %v, want redraw", cmd)
+	}
+	if got, want := viewer.statusMessage, "File marked unviewed."; got != want {
+		t.Fatalf("status = %q, want %q", got, want)
+	}
+	if got, want := len(viewer.rows), len(rows); got != want {
+		t.Fatalf("visible rows = %d, want expanded %d", got, want)
+	}
+	if got, want := viewer.displayRowText(viewer.rows[0]), "main.go"; got != want {
+		t.Fatalf("display row = %q, want %q", got, want)
+	}
+	file, err = review.LoadViewedFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if file.IsViewed("main.go", "2222222") {
+		t.Fatalf("saved viewed file = %+v, want file unviewed", file)
+	}
+}
+
+func TestDiffViewerSamePathDifferentHashIsUnviewed(t *testing.T) {
+	rows := viewedTestRows(t, "3333333")
+	viewer := &diffViewer{
+		rows:   rows,
+		viewed: review.ViewedFile{Version: 1, Files: map[string]string{"main.go": "2222222"}},
+	}
+
+	if viewer.rowViewed(rows[0]) {
+		t.Fatal("same path with different hash reported viewed")
+	}
+	if got, want := viewer.displayRowText(rows[0]), "main.go"; got != want {
+		t.Fatalf("display row = %q, want %q", got, want)
+	}
+}
+
+func TestDiffViewerSpaceVWithoutFileHashDoesNotSave(t *testing.T) {
+	path := filepath.Join(t.TempDir(), ".comview", "viewed.json")
+	viewer := &diffViewer{
+		rows:       []diff.Row{{Kind: diff.RowFile, Text: "main.go", FileName: "main.go"}},
+		viewedFile: path,
+	}
+
+	cmd := pressSpaceV(t, viewer)
+	if cmd != CommandRedraw {
+		t.Fatalf("command = %v, want redraw", cmd)
+	}
+	if got, want := viewer.statusMessage, "No file hash."; got != want {
+		t.Fatalf("status = %q, want %q", got, want)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("viewed file stat err = %v, want not exist", err)
+	}
+}
+
+func TestDiffViewerWatchReplacementPreservesViewedStateAndInvalidatesHash(t *testing.T) {
+	rows := viewedTestRows(t, "2222222")
+	viewer := &diffViewer{
+		allRows: rows,
+		rows:    rows,
+		viewed:  review.ViewedFile{Version: 1, Files: map[string]string{"main.go": "2222222"}},
+	}
+	viewer.applyViewedFolding()
+	if !viewer.rowViewed(rows[0]) {
+		t.Fatal("initial row not viewed")
+	}
+	if got, want := len(viewer.rows), 1; got != want {
+		t.Fatalf("initial visible rows = %d, want %d", got, want)
+	}
+
+	cmd, err := viewer.HandleEvent(watchUpdateEvent{Rows: viewedTestRows(t, "3333333")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cmd != CommandRedraw {
+		t.Fatalf("command = %v, want redraw", cmd)
+	}
+	if !viewer.viewed.IsViewed("main.go", "2222222") {
+		t.Fatalf("viewed state = %+v, want old hash preserved", viewer.viewed)
+	}
+	if viewer.rowViewed(viewer.rows[0]) {
+		t.Fatal("replacement row with new hash reported viewed")
+	}
+	if got, want := len(viewer.rows), len(viewedTestRows(t, "3333333")); got != want {
+		t.Fatalf("replacement visible rows = %d, want expanded %d", got, want)
+	}
+}
+
+func TestDiffViewerViewedFoldingKeepsStatsAndFinderDetails(t *testing.T) {
+	rows := viewedTestRows(t, "2222222")
+	viewer := &diffViewer{
+		allRows: rows,
+		rows:    rows,
+		viewed:  review.ViewedFile{Version: 1, Files: map[string]string{"main.go": "2222222"}},
+	}
+	viewer.applyViewedFolding()
+
+	if got, want := len(viewer.rows), 1; got != want {
+		t.Fatalf("visible rows = %d, want %d", got, want)
+	}
+	context := viewer.currentStatusContext()
+	if context.TotalStats.Adds != 1 || context.TotalStats.Deletes != 1 || context.FileStats.Adds != 1 || context.FileStats.Deletes != 1 {
+		t.Fatalf("stats = total %+v file %+v, want +1 -1", context.TotalStats, context.FileStats)
+	}
+	items := viewer.fileFinderItems()
+	if len(items) != 1 || items[0].Detail != "+1 -1" || items[0].Row != 0 {
+		t.Fatalf("finder items = %+v, want folded file with full stats", items)
+	}
+}
+
+func viewedTestRows(t *testing.T, hash string) []diff.Row {
+	t.Helper()
+	rows, err := rowsForInput(fmt.Sprintf(`diff --git a/main.go b/main.go
+index 1111111..%s 100644
+--- a/main.go
++++ b/main.go
+@@ -1 +1 @@
+-old
++new
+`, hash))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return rows
+}
+
+func pressSpaceV(t *testing.T, viewer *diffViewer) Command {
+	t.Helper()
+	cmd, err := viewer.HandleEvent(vaxis.Key{Text: " ", Keycode: vaxis.KeySpace})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cmd != CommandNone || viewer.keys.Pending() != " " {
+		t.Fatalf("space command/pending = %v/%q, want none/space", cmd, viewer.keys.Pending())
+	}
+	cmd, err = viewer.HandleEvent(vaxis.Key{Text: "v", Keycode: 'v'})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return cmd
+}
+
 func TestDiffViewerFileFinderIncludesDiffStatFiles(t *testing.T) {
 	rows, err := rowsForInput(` README.md        |  1 +
  tui/app.go       | 12 ++++++------

@@ -63,7 +63,7 @@ func (d Document) RowsWithOptions(options RenderOptions) []Row {
 			if fileIndex > 0 && len(file.Preamble) == 0 {
 				rows = append(rows, Row{Kind: RowBlank})
 			}
-			rows = append(rows, Row{Kind: RowFile, Text: name, FileName: syntaxName})
+			rows = append(rows, Row{Kind: RowFile, Text: name, FileName: syntaxName, FileHash: viewedObjectID(file)})
 		}
 
 		if options.ShowFileMetadata {

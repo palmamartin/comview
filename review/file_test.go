@@ -52,3 +52,40 @@ func TestLoadFileMissingReturnsEmptyFile(t *testing.T) {
 		t.Fatalf("file = %+v, want empty version 1 file", file)
 	}
 }
+
+func TestLoadViewedFileMissingReturnsEmptyFile(t *testing.T) {
+	file, err := LoadViewedFile(filepath.Join(t.TempDir(), ".comview", "viewed.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if file.Version != 1 || len(file.Files) != 0 {
+		t.Fatalf("file = %+v, want empty version 1 file", file)
+	}
+}
+
+func TestSaveLoadViewedFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), ".comview", "viewed.json")
+	file := ViewedFile{Version: 1, Files: map[string]string{"tui/app.go": "89abcde"}}
+
+	if err := SaveViewedFile(path, file); err != nil {
+		t.Fatal(err)
+	}
+	got, err := LoadViewedFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if got.Version != 1 || got.Files["tui/app.go"] != "89abcde" {
+		t.Fatalf("file = %+v, want %+v", got, file)
+	}
+}
+
+func TestViewedFileHashMismatchIsNotViewed(t *testing.T) {
+	file := ViewedFile{Version: 1, Files: map[string]string{"tui/app.go": "89abcde"}}
+	if file.IsViewed("tui/app.go", "1234567") {
+		t.Fatal("hash mismatch reported viewed")
+	}
+	if !file.IsViewed("tui/app.go", "89abcde") {
+		t.Fatal("matching hash not reported viewed")
+	}
+}

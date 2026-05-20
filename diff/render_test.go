@@ -469,6 +469,50 @@ func TestRowsUseCleanRenameFileHeader(t *testing.T) {
 	}
 }
 
+func TestRowsWithOptionsAddsFileHashToFileRows(t *testing.T) {
+	doc, err := Parse(`diff --git a/main.go b/main.go
+index 1234567..89abcde 100644
+--- a/main.go
++++ b/main.go
+@@ -1 +1 @@
+-old
++new
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	rows := doc.Rows()
+	if len(rows) == 0 || rows[0].Kind != RowFile {
+		t.Fatalf("first row = %+v, want file row", rows)
+	}
+	if rows[0].FileName != "main.go" || rows[0].FileHash != "89abcde" {
+		t.Fatalf("file row path/hash = %q/%q, want main.go/89abcde", rows[0].FileName, rows[0].FileHash)
+	}
+}
+
+func TestRowsWithOptionsUsesOldFileHashForDeletedFile(t *testing.T) {
+	doc, err := Parse(`diff --git a/main.go b/main.go
+deleted file mode 100644
+index 1234567..0000000
+--- a/main.go
++++ /dev/null
+@@ -1 +0,0 @@
+-old
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	rows := doc.Rows()
+	if len(rows) == 0 || rows[0].Kind != RowFile {
+		t.Fatalf("first row = %+v, want file row", rows)
+	}
+	if rows[0].FileName != "main.go" || rows[0].FileHash != "1234567" {
+		t.Fatalf("file row path/hash = %q/%q, want main.go/1234567", rows[0].FileName, rows[0].FileHash)
+	}
+}
+
 func TestRowsSeparateFileHeaders(t *testing.T) {
 	doc, err := Parse(`diff --git a/one.go b/one.go
 --- a/one.go

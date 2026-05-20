@@ -28,6 +28,9 @@ index 1111111..2222222 100644
 	if file.OldName != "a/main.go" || file.NewName != "b/main.go" {
 		t.Fatalf("file names = %q, %q", file.OldName, file.NewName)
 	}
+	if file.OldObjectID != "1111111" || file.NewObjectID != "2222222" {
+		t.Fatalf("object ids = %q, %q", file.OldObjectID, file.NewObjectID)
+	}
 	if len(file.Hunks) != 1 {
 		t.Fatalf("hunks = %d, want 1", len(file.Hunks))
 	}
@@ -39,6 +42,40 @@ index 1111111..2222222 100644
 	}
 	if file.Hunks[0].Lines[2].Kind != Add {
 		t.Fatalf("third line kind = %v, want Add", file.Hunks[0].Lines[2].Kind)
+	}
+}
+
+func TestParseGitDiffIndexObjectIDs(t *testing.T) {
+	doc, err := Parse(`diff --git a/main.go b/main.go
+index 1234567..89abcde 100644
+--- a/main.go
++++ b/main.go
+@@ -1 +1 @@
+-old
++new
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := doc.Files[0].OldObjectID, "1234567"; got != want {
+		t.Fatalf("old object id = %q, want %q", got, want)
+	}
+	if got, want := doc.Files[0].NewObjectID, "89abcde"; got != want {
+		t.Fatalf("new object id = %q, want %q", got, want)
+	}
+}
+
+func TestViewedObjectIDUsesNewObjectIDForModifiedFile(t *testing.T) {
+	file := File{OldObjectID: "1234567", NewObjectID: "89abcde"}
+	if got, want := viewedObjectID(file), "89abcde"; got != want {
+		t.Fatalf("viewed object id = %q, want %q", got, want)
+	}
+}
+
+func TestViewedObjectIDUsesOldObjectIDForDeletedFile(t *testing.T) {
+	file := File{OldObjectID: "1234567", NewObjectID: "0000000"}
+	if got, want := viewedObjectID(file), "1234567"; got != want {
+		t.Fatalf("viewed object id = %q, want %q", got, want)
 	}
 }
 

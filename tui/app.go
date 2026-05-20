@@ -66,6 +66,10 @@ func newDiffApp(rows []diff.Row) (*App, *diffViewer, error) {
 	if err != nil {
 		return nil, nil, err
 	}
+	viewedFile, err := review.LoadViewedFile(review.DefaultViewedFilePath)
+	if err != nil {
+		return nil, nil, err
+	}
 	scheme := DefaultColorScheme()
 	themeName := Themes[0].Name
 	if cfg.Theme != "" {
@@ -75,15 +79,19 @@ func newDiffApp(rows []diff.Row) (*App, *diffViewer, error) {
 		}
 	}
 	viewer := &diffViewer{
+		allRows:      rows,
 		rows:         rows,
 		reviewDrafts: commentFile.Comments,
 		reviewFile:   commentPath,
+		viewed:       viewedFile,
+		viewedFile:   review.DefaultViewedFilePath,
 		scheme:       scheme,
 		themeName:    themeName,
 		highlighter:  NewSyntaxHighlighter(),
 		binds:        newBindings(cfg.Keybindings),
 		wrapLines:    cfg.Wrap,
 	}
+	viewer.applyViewedFolding()
 	app, err := NewApp(viewer, vaxis.Options{
 		CSIuBitMask: keyboardFlags,
 	})
@@ -103,6 +111,7 @@ func rowsForInput(input string) ([]diff.Row, error) {
 }
 
 type diffViewer struct {
+	allRows             []diff.Row
 	rows                []diff.Row
 	scroll              int
 	scrollOffset        int
@@ -124,6 +133,8 @@ type diffViewer struct {
 	reviewDrafts        []review.CommentDraft
 	reviewDirty         bool
 	reviewFile          string
+	viewed              review.ViewedFile
+	viewedFile          string
 	editor              *commentEditor
 	binds               Bindings
 	wrapLines           bool
@@ -282,6 +293,7 @@ var helpKeybinds = []helpKeybind{
 	{Key: "s", READMEKey: "`s`", Action: "Toggle side-by-side view"},
 	{Key: "t", READMEKey: "`t`", Action: "Choose theme"},
 	{Key: "Space e", READMEKey: "`<space>e`", Action: "Find file in diff"},
+	{Key: "Space v", READMEKey: "`<space>v`", Action: "Mark file viewed/unviewed"},
 	{Key: "/", READMEKey: "`/`", Action: "Search"},
 	{Key: "n / N", READMEKey: "`n` / `N`", Action: "Next / previous search result"},
 	{Key: "o", READMEKey: "`o`", Action: "Open cursor location in editor"},
@@ -438,6 +450,9 @@ func (d *diffViewer) handleKey(key vaxis.Key) (Command, error) {
 	case key.Matches('e') && d.keys.Pending() == " ":
 		d.keys.Clear()
 		return d.openFileFinderCommand(), nil
+	case key.Matches('v') && d.keys.Pending() == " ":
+		d.keys.Clear()
+		return d.toggleViewedCommand(), nil
 	case d.binds.Matches(key, "search"):
 		d.keys.Clear()
 		d.enterSearchMode()
@@ -716,6 +731,118 @@ func (d *diffViewer) handleTextObjectKey(key vaxis.Key) (Command, error) {
 	return CommandRedraw, nil
 }
 
+type viewedFileTarget struct {
+	Path string
+	Hash string
+}
+
+func (d *diffViewer) toggleViewedCommand() Command {
+	target, ok := d.currentViewedTarget()
+	if !ok {
+		return CommandRedraw
+	}
+	fileRow := d.currentFileRow()
+
+	oldHash, hadOld := "", false
+	if d.viewed.Files != nil {
+		oldHash, hadOld = d.viewed.Files[target.Path]
+	}
+	wasViewed := d.fileViewed(target.Path, target.Hash)
+	if wasViewed {
+		d.viewed.Unmark(target.Path)
+	} else {
+		d.viewed.Mark(target.Path, target.Hash)
+	}
+
+	if err := d.saveViewedFile(); err != nil {
+		if hadOld {
+			d.viewed.Mark(target.Path, oldHash)
+		} else {
+			d.viewed.Unmark(target.Path)
+		}
+		d.applyViewedFolding()
+		d.setStatusMessage(fmt.Sprintf("Could not save viewed state: %v", err))
+		return CommandRedraw
+	}
+
+	d.applyViewedFolding()
+	if fileRow >= 0 {
+		d.setCursor(selectionPoint{Row: minInt(fileRow, len(d.rows)-1)})
+		d.ensureCursorVisible()
+	}
+	if wasViewed {
+		d.setStatusMessage("File marked unviewed.")
+	} else {
+		d.setStatusMessage("File marked viewed.")
+	}
+	return CommandRedraw
+}
+
+func (d *diffViewer) currentViewedTarget() (viewedFileTarget, bool) {
+	if d.cursor.Row < 0 || d.cursor.Row >= len(d.rows) {
+		d.setStatusMessage("No file.")
+		return viewedFileTarget{}, false
+	}
+	fileRow := d.currentFileRow()
+	if fileRow < 0 {
+		if d.rows[d.cursor.Row].FileName != "" {
+			d.setStatusMessage("No file hash.")
+		} else {
+			d.setStatusMessage("No file.")
+		}
+		return viewedFileTarget{}, false
+	}
+	target := viewedTargetForRow(d.rows[fileRow])
+	if target.Path == "" {
+		d.setStatusMessage("No file.")
+		return viewedFileTarget{}, false
+	}
+	if target.Hash == "" {
+		d.setStatusMessage("No file hash.")
+		return viewedFileTarget{}, false
+	}
+	return target, true
+}
+
+func (d *diffViewer) currentFileRow() int {
+	if d.cursor.Row < 0 || d.cursor.Row >= len(d.rows) {
+		return -1
+	}
+	for row := d.cursor.Row; row >= 0; row-- {
+		switch d.rows[row].Kind {
+		case diff.RowFile:
+			return row
+		case diff.RowCommitHeader:
+			return -1
+		}
+	}
+	return -1
+}
+
+func viewedTargetForRow(row diff.Row) viewedFileTarget {
+	path := row.FileName
+	if path == "" && row.Kind == diff.RowFile {
+		path = row.Text
+	}
+	return viewedFileTarget{Path: path, Hash: row.FileHash}
+}
+
+func (d *diffViewer) rowViewed(row diff.Row) bool {
+	target := viewedTargetForRow(row)
+	return d.fileViewed(target.Path, target.Hash)
+}
+
+func (d *diffViewer) fileViewed(path string, hash string) bool {
+	return d.viewed.IsViewed(path, hash)
+}
+
+func (d *diffViewer) saveViewedFile() error {
+	if d.viewedFile == "" {
+		return nil
+	}
+	return review.SaveViewedFile(d.viewedFile, d.viewed)
+}
+
 func (d *diffViewer) openFileFinderCommand() Command {
 	items := d.fileFinderItems()
 	if len(items) == 0 {
@@ -751,23 +878,24 @@ func (d *diffViewer) openThemeFinderCommand() Command {
 
 func (d *diffViewer) fileFinderItems() []fuzzyItem {
 	items := make([]fuzzyItem, 0)
-	for rowIndex, row := range d.rows {
+	rows := d.sourceRows()
+	for rowIndex, row := range rows {
 		if row.Kind != diff.RowFile {
 			if row.Kind == diff.RowDiffStat && row.FileName != "" {
 				items = append(items, fuzzyItem{
 					Label:  row.FileName,
 					Detail: statDetail(row.Stat),
-					Row:    rowIndex,
+					Row:    d.projectedRowIndex(rowIndex),
 				})
 			}
 			continue
 		}
-		stats := d.fileStatsFromRow(rowIndex)
+		stats := fileStatsFromRows(rows, rowIndex)
 		detail := stats.String()
 		items = append(items, fuzzyItem{
 			Label:  row.Text,
 			Detail: detail,
-			Row:    rowIndex,
+			Row:    d.projectedRowIndex(rowIndex),
 		})
 	}
 	return items
@@ -777,9 +905,34 @@ func (d *diffViewer) fileStatsFromRow(fileRow int) statusStats {
 	if fileRow < 0 || fileRow >= len(d.rows) || d.rows[fileRow].Kind != diff.RowFile {
 		return statusStats{}
 	}
-	fileEnd := len(d.rows)
-	for rowIndex := fileRow + 1; rowIndex < len(d.rows); rowIndex++ {
-		switch d.rows[rowIndex].Kind {
+	target := viewedTargetForRow(d.rows[fileRow])
+	rows := d.sourceRows()
+	for sourceRow, row := range rows {
+		if row.Kind != diff.RowFile {
+			continue
+		}
+		rowTarget := viewedTargetForRow(row)
+		if rowTarget.Path == target.Path && rowTarget.Hash == target.Hash {
+			return fileStatsFromRows(rows, sourceRow)
+		}
+	}
+	return statusStats{}
+}
+
+func (d *diffViewer) sourceRows() []diff.Row {
+	if d.allRows != nil {
+		return d.allRows
+	}
+	return d.rows
+}
+
+func fileStatsFromRows(rows []diff.Row, fileRow int) statusStats {
+	if fileRow < 0 || fileRow >= len(rows) || rows[fileRow].Kind != diff.RowFile {
+		return statusStats{}
+	}
+	fileEnd := len(rows)
+	for rowIndex := fileRow + 1; rowIndex < len(rows); rowIndex++ {
+		switch rows[rowIndex].Kind {
 		case diff.RowFile, diff.RowCommitHeader:
 			fileEnd = rowIndex
 		}
@@ -787,7 +940,34 @@ func (d *diffViewer) fileStatsFromRow(fileRow int) statusStats {
 			break
 		}
 	}
-	return rowsStats(d.rows[fileRow:fileEnd])
+	return rowsStats(rows[fileRow:fileEnd])
+}
+
+func (d *diffViewer) projectedRowIndex(sourceRow int) int {
+	rows := d.sourceRows()
+	if sourceRow < 0 || sourceRow >= len(rows) {
+		return sourceRow
+	}
+	projected := 0
+	folded := false
+	for rowIndex, row := range rows {
+		if rowIndex == sourceRow {
+			return projected
+		}
+		switch row.Kind {
+		case diff.RowFile:
+			projected++
+			folded = d.rowViewed(row)
+		case diff.RowCommitHeader:
+			projected++
+			folded = false
+		default:
+			if !folded {
+				projected++
+			}
+		}
+	}
+	return projected
 }
 
 func statDetail(stat diff.Stat) string {
@@ -1557,7 +1737,7 @@ func (d *diffViewer) currentStatusContext() statusContext {
 	var context statusContext
 	context.Commits = d.countRows(diff.RowCommitHeader)
 	context.Files = d.countFiles()
-	context.TotalStats = rowsStats(d.rows)
+	context.TotalStats = rowsStats(d.sourceRows())
 	context.CommitIndex, context.Commit = d.currentCommitContext()
 	context.FileIndex, context.File, context.FileStats = d.currentFileContext()
 	return context
@@ -1565,7 +1745,7 @@ func (d *diffViewer) currentStatusContext() statusContext {
 
 func (d *diffViewer) countFiles() int {
 	count := 0
-	for _, row := range d.rows {
+	for _, row := range d.sourceRows() {
 		switch row.Kind {
 		case diff.RowFile, diff.RowDiffStat:
 			count++
@@ -1636,17 +1816,10 @@ func (d *diffViewer) currentFileContext() (int, string, statusStats) {
 	if fileStart < 0 {
 		return 0, "", statusStats{}
 	}
-	fileEnd := len(d.rows)
-	for rowIndex := fileStart + 1; rowIndex < len(d.rows); rowIndex++ {
-		switch d.rows[rowIndex].Kind {
-		case diff.RowFile, diff.RowDiffStat, diff.RowCommitHeader:
-			fileEnd = rowIndex
-		}
-		if fileEnd == rowIndex {
-			break
-		}
+	if d.rows[fileStart].Kind == diff.RowFile {
+		return currentIndex, fileName, d.fileStatsFromRow(fileStart)
 	}
-	return currentIndex, fileName, rowsStats(d.rows[fileStart:fileEnd])
+	return currentIndex, fileName, rowsStats(d.rows[fileStart : fileStart+1])
 }
 
 func rowsStats(rows []diff.Row) statusStats {
@@ -2630,7 +2803,7 @@ func (d *diffViewer) printRow(win vaxis.Window, row int, docRow int, diffRow dif
 	}
 
 	if diffRow.Code == "" {
-		printSegmentsAt(win, 0, row, vaxis.Segment{Text: diffRow.Text, Style: d.rowStyle(d.styleFor(diffRow.Kind), cursorLine)})
+		printSegmentsAt(win, 0, row, vaxis.Segment{Text: d.displayRowText(diffRow), Style: d.rowStyle(d.styleFor(diffRow.Kind), cursorLine)})
 		return
 	}
 
@@ -2713,6 +2886,13 @@ func (d *diffViewer) structuredSegments(row diff.Row) ([]vaxis.Segment, bool) {
 	default:
 		return nil, false
 	}
+}
+
+func (d *diffViewer) displayRowText(row diff.Row) string {
+	if row.Kind == diff.RowFile && d.rowViewed(row) {
+		return "✓ " + row.Text
+	}
+	return row.Text
 }
 
 func (d *diffViewer) diffStatSegments(row diff.Row, layout diffStatLayout) []vaxis.Segment {
@@ -3290,13 +3470,13 @@ func (d *diffViewer) invalidateRenderCache() {
 }
 
 func (d *diffViewer) replaceRows(rows []diff.Row) {
-	d.rows = rows
+	d.allRows = rows
+	d.applyViewedFolding()
 	d.selection = textSelection{}
 	d.yankSelection = textSelection{}
 	d.commentSelection = textSelection{}
 	d.finder = nil
 	d.finderMode = 0
-	d.invalidateRenderCache()
 	if d.searchQuery != "" {
 		d.updateSearchMatches()
 	}
@@ -5917,6 +6097,36 @@ func (d *diffViewer) setScrollRow(row int) {
 	d.clampScroll()
 }
 
+func (d *diffViewer) applyViewedFolding() {
+	if d.allRows == nil {
+		d.allRows = d.rows
+	}
+	rows := d.allRows
+	if len(rows) == 0 {
+		d.rows = nil
+		d.invalidateRenderCache()
+		return
+	}
+	projected := make([]diff.Row, 0, len(rows))
+	folded := false
+	for _, row := range rows {
+		switch row.Kind {
+		case diff.RowFile:
+			projected = append(projected, row)
+			folded = d.rowViewed(row)
+		case diff.RowCommitHeader:
+			projected = append(projected, row)
+			folded = false
+		default:
+			if !folded {
+				projected = append(projected, row)
+			}
+		}
+	}
+	d.rows = projected
+	d.invalidateRenderCache()
+}
+
 func (d *diffViewer) clampHorizontalScroll() {
 	maxScroll := d.maxHorizontalScroll()
 	if d.xScroll < 0 {
@@ -5959,7 +6169,7 @@ func (d *diffViewer) clampCursorCol(row int, col int) int {
 	if col < 0 {
 		return 0
 	}
-	if width := textCellWidth(d.rows[row].Text); col > width {
+	if width := textCellWidth(d.displayRowText(d.rows[row])); col > width {
 		return width
 	}
 	return col
@@ -6097,7 +6307,7 @@ func (d *diffViewer) cursorLineEnd() {
 	if start, end, ok := d.codeRange(d.rows[d.cursor.Row]); ok {
 		d.cursor.Col = maxInt(start, end-1)
 	} else {
-		d.cursor.Col = maxInt(0, textCellWidth(d.rows[d.cursor.Row].Text)-1)
+		d.cursor.Col = maxInt(0, textCellWidth(d.displayRowText(d.rows[d.cursor.Row]))-1)
 	}
 	d.cursorGoal = d.cursor.Col
 	d.ensureCursorVisible()
@@ -6910,7 +7120,7 @@ func (d *diffViewer) contentWidth() int {
 
 	width := 0
 	for _, row := range d.rows {
-		rowWidth := textCellWidth(row.Text)
+		rowWidth := textCellWidth(d.displayRowText(row))
 		if selectableDiffRow(row.Kind) && (row.Code != "" || row.Gutter != "" || row.Marker != "") {
 			rowWidth = d.codeOffset(row) + codeCellWidth(row)
 		}

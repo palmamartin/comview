@@ -22,12 +22,14 @@ type Metadata struct {
 }
 
 type File struct {
-	Preamble []string
-	Header   []string
-	OldName  string
-	NewName  string
-	Hunks    []Hunk
-	Metadata Metadata
+	Preamble    []string
+	Header      []string
+	OldName     string
+	NewName     string
+	OldObjectID string
+	NewObjectID string
+	Hunks       []Hunk
+	Metadata    Metadata
 }
 
 type Hunk struct {
@@ -59,6 +61,7 @@ type Row struct {
 	Kind        RowKind
 	Text        string
 	FileName    string
+	FileHash    string
 	Review      review.Anchor
 	Gutter      string
 	Marker      string
@@ -177,6 +180,10 @@ func Parse(input string) (Document, error) {
 
 		if currentHunk == nil {
 			currentFile.Header = append(currentFile.Header, line)
+			if oldID, newID, ok := parseIndexLine(line); ok {
+				currentFile.OldObjectID = oldID
+				currentFile.NewObjectID = newID
+			}
 			if strings.HasPrefix(line, "--- ") {
 				currentFile.OldName = strings.TrimPrefix(line, "--- ")
 			}
@@ -241,6 +248,44 @@ func isCommitHeader(line string) bool {
 	}
 	fields := strings.Fields(line)
 	return len(fields) >= 2
+}
+
+func parseIndexLine(line string) (string, string, bool) {
+	fields := strings.Fields(line)
+	if len(fields) < 2 || fields[0] != "index" {
+		return "", "", false
+	}
+	oldID, newID, ok := strings.Cut(fields[1], "..")
+	if !ok || oldID == "" || newID == "" {
+		return "", "", false
+	}
+	return oldID, newID, true
+}
+
+func viewedObjectID(file File) string {
+	if usableObjectID(file.NewObjectID) {
+		return file.NewObjectID
+	}
+	if zeroObjectID(file.NewObjectID) && usableObjectID(file.OldObjectID) {
+		return file.OldObjectID
+	}
+	return ""
+}
+
+func usableObjectID(id string) bool {
+	return id != "" && !zeroObjectID(id)
+}
+
+func zeroObjectID(id string) bool {
+	if id == "" {
+		return false
+	}
+	for _, r := range id {
+		if r != '0' {
+			return false
+		}
+	}
+	return true
 }
 
 func parseHunkHeader(line string) (Hunk, error) {
