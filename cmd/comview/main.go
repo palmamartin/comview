@@ -60,15 +60,11 @@ func readPipe() (string, error) {
 		return "", nil
 	}
 
-	input, err := io.ReadAll(os.Stdin)
-	if err != nil {
-		return "", err
-	}
-	return printableANSIOutput(string(input)), nil
+	return printableANSIOutput(os.Stdin), nil
 }
 
-func printableANSIOutput(input string) string {
-	parser := ansi.NewParser(strings.NewReader(input), ansi.ParserModeOutput)
+func printableANSIOutput(input io.Reader) string {
+	parser := ansi.NewParser(input, ansi.ParserModeOutput)
 	var output strings.Builder
 	for seq := range parser.Next() {
 		switch seq := seq.(type) {
