@@ -1166,8 +1166,7 @@ func (d *diffViewer) screenRowForDocRow(docRow int, width int, height int) int {
 		rows := d.sideBySideRows()
 		start := d.sideBySideStart(rows)
 		screenRow := -d.scrollOffset
-		visible := d.visibleRowCapacity()
-		for index := start; index < len(rows) && screenRow < visible; index++ {
+		for index := start; index < len(rows); index++ {
 			if rowContainsDocRow(rows[index], docRow) {
 				return screenRow
 			}
@@ -3156,6 +3155,16 @@ func firstAvailableDocRow(preferred int, fallback int) int {
 		return preferred
 	}
 	return fallback
+}
+
+func sideBySideCursorDocRowForSide(row sideBySideRow, side diffSide) int {
+	if row.Full >= 0 {
+		return row.Full
+	}
+	if side == sideLeft {
+		return row.Left
+	}
+	return row.Right
 }
 
 func sideForRow(row diff.Row) diffSide {
@@ -6004,16 +6013,8 @@ func (d *diffViewer) moveSideBySideCursorRows(delta int) {
 		return
 	}
 
-	index += delta
-	if index < 0 {
-		index = 0
-	}
-	if index >= len(rows) {
-		index = len(rows) - 1
-	}
-
 	side := sideForRow(d.rows[d.cursor.Row])
-	row := sideBySideDocRowForSide(rows[index], side)
+	row := d.sideBySideCursorRowByDelta(rows, index, side, delta)
 	if row < 0 || row >= len(d.rows) {
 		return
 	}
@@ -6022,6 +6023,32 @@ func (d *diffViewer) moveSideBySideCursorRows(delta int) {
 	d.cursor.Col = d.clampCursorCol(d.cursor.Row, d.cursorGoal)
 	d.ensureCursorRowVisible()
 	d.updateVisualSelection()
+}
+
+func (d *diffViewer) sideBySideCursorRowByDelta(rows []sideBySideRow, index int, side diffSide, delta int) int {
+	direction := 1
+	if delta < 0 {
+		direction = -1
+		delta = -delta
+	}
+	row := -1
+	for step := 0; step < delta; step++ {
+		found := false
+		for next := index + direction; next >= 0 && next < len(rows); next += direction {
+			candidate := sideBySideCursorDocRowForSide(rows[next], side)
+			if candidate < 0 {
+				continue
+			}
+			index = next
+			row = candidate
+			found = true
+			break
+		}
+		if !found {
+			return -1
+		}
+	}
+	return row
 }
 
 func (d *diffViewer) moveCursorCols(delta int) {
@@ -6359,6 +6386,15 @@ func (d *diffViewer) prepareCursorForMovement() {
 	d.clampCursor()
 	visible := d.visibleRowCapacity()
 	if visible <= 0 {
+		return
+	}
+	if d.layoutMode == layoutSideBySide {
+		if _, _, ok := d.cursorScreenPositionForSize(d.width, d.height); ok {
+			return
+		}
+		d.cursor.Row = d.scroll
+		d.clampCursor()
+		d.cursorGoal = d.cursor.Col
 		return
 	}
 	if d.cursor.Row < d.scroll || d.cursor.Row >= d.scroll+visible {

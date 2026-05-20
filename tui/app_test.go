@@ -3560,6 +3560,150 @@ func TestDiffViewerMouseWheelScrollsSideBySideReviewDraftOneDisplayRowAtATime(t 
 	}
 }
 
+func TestDiffViewerSideBySideCursorDownStaysAtBottomOfGitShow(t *testing.T) {
+	rows, err := rowsForInput(`commit 7aaedd7ecdb1916be1135e4c321b1ca5e26712dd
+Author: jossephus <jossephustuemay@gmail.com>
+Date:   Tue May 19 23:56:07 2026 +0300
+
+    improve mouse-wheel scroll performance
+
+diff --git a/tui/app.go b/tui/app.go
+index b5a14b98dbfc..a676f94aa9ab 100644
+--- a/tui/app.go
++++ b/tui/app.go
+@@ -6561,7 +6561,8 @@ func (d *diffViewer) maxScrollForVisibleRows(visible int, width int, height int)
+ 		return 0
+ 	}
+ 	viewportWidth := width
+-	if d.wrapLines && d.layoutMode != layoutSideBySide {
++	useViewportHeights := d.wrapLines && d.layoutMode != layoutSideBySide
++	if useViewportHeights {
+ 		verticalVisible, _ := d.scrollbarVisibility(width, height)
+ 		viewportWidth = horizontalViewportWidth(width, verticalVisible)
+ 	}
+@@ -6571,10 +6572,10 @@ func (d *diffViewer) maxScrollForVisibleRows(visible int, width int, height int)
+ 		if displayRows <= threshold {
+ 			maxScroll = row
+ 		}
+-		displayRows += d.wrappedDocRowHeight(row, viewportWidth)
+-		if d.wrapLines && d.layoutMode != layoutSideBySide {
+-			displayRows += d.reviewDraftBoxRowsAfterRowForViewport(row, viewportWidth)
++		if useViewportHeights {
++			displayRows += d.rowDisplayHeightForViewport(row, viewportWidth, height)
+ 		} else {
++			displayRows += d.wrappedDocRowHeight(row, viewportWidth)
+ 			displayRows += d.reviewDraftBoxRowsAfterRowForSize(row, width, height)
+ 		}
+ 	}
+@@ -6686,9 +6687,19 @@ func (d *diffViewer) displayScrollPositionForSize(width int, height int) int {
+ 	if d.scroll <= 0 {
+ 		return d.scrollOffset
+ 	}
++	viewportWidth := width
++	useViewportHeights := d.wrapLines && d.layoutMode != layoutSideBySide
++	if useViewportHeights {
++		verticalVisible, _ := d.scrollbarVisibility(width, height)
++		viewportWidth = horizontalViewportWidth(width, verticalVisible)
++	}
+ 	position := 0
+ 	for row := 0; row < d.scroll && row < len(d.rows); row++ {
+-		position += d.rowDisplayHeightForSize(row, width, height)
++		if useViewportHeights {
++			position += d.rowDisplayHeightForViewport(row, viewportWidth, height)
++		} else {
++			position += d.rowDisplayHeightForSize(row, width, height)
++		}
+ 	}
+ 	return position + d.scrollOffset
+ }
+@@ -6728,8 +6739,19 @@ func (d *diffViewer) setDisplayScrollPositionForSize(position int, width int, he
+ 		d.scrollOffset = 0
+ 		return
+ 	}
++	viewportWidth := width
++	useViewportHeights := d.wrapLines && d.layoutMode != layoutSideBySide
++	if useViewportHeights {
++		verticalVisible, _ := d.scrollbarVisibility(width, height)
++		viewportWidth = horizontalViewportWidth(width, verticalVisible)
++	}
+ 	for row := range d.rows {
+-		rowHeight := d.rowDisplayHeightForSize(row, width, height)
++		rowHeight := 0
++		if useViewportHeights {
++			rowHeight = d.rowDisplayHeightForViewport(row, viewportWidth, height)
++		} else {
++			rowHeight = d.rowDisplayHeightForSize(row, width, height)
++		}
+ 		if rowHeight <= 0 {
+ 			rowHeight = 1
+ 		}
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	viewer := &diffViewer{
+		rows:       rows,
+		cursor:     selectionPoint{Row: 0},
+		layoutMode: layoutSideBySide,
+	}
+	viewer.Layout(Tight(Size{Width: 80, Height: 10}))
+
+	expectedRows := []int{viewer.cursor.Row}
+	for _, sideRow := range viewer.sideBySideRows() {
+		row := sideRow.Right
+		if sideRow.Full >= 0 {
+			row = sideRow.Full
+		}
+		if row >= 0 && row != expectedRows[len(expectedRows)-1] {
+			expectedRows = append(expectedRows, row)
+		}
+	}
+	if len(expectedRows) < 2 {
+		t.Fatalf("expected cursor rows = %+v, want multiple rows", expectedRows)
+	}
+
+	for index, wantRow := range expectedRows[1:] {
+		before := viewer.cursor
+		cmd, err := viewer.HandleEvent(vaxis.Key{Text: "j", Keycode: 'j'})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if cmd != CommandRedraw {
+			t.Fatalf("down command %d = %v, want redraw", index+1, cmd)
+		}
+		if got := viewer.cursor.Row; got != wantRow {
+			t.Fatalf("cursor row after down %d = %d, want %d; before = %+v", index+1, got, wantRow, before)
+		}
+		if viewer.cursor.Row < before.Row {
+			t.Fatalf("cursor moved backward after down %d: %+v -> %+v", index+1, before, viewer.cursor)
+		}
+		if _, _, ok := viewer.cursorScreenPositionForSize(80, 10); !ok {
+			t.Fatalf(
+				"cursor is not visible after down %d at %+v; before = %+v scroll = %d/%d display = %d screen = %d",
+				index+1,
+				viewer.cursor,
+				before,
+				viewer.scroll,
+				viewer.scrollOffset,
+				viewer.displayScrollPositionForSize(80, 10),
+				viewer.screenRowForDocRow(viewer.cursor.Row, 80, 10),
+			)
+		}
+	}
+
+	cmd, err := viewer.HandleEvent(vaxis.Key{Text: "j", Keycode: 'j'})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cmd != CommandRedraw {
+		t.Fatalf("down command = %v, want redraw", cmd)
+	}
+	bottom := selectionPoint{Row: expectedRows[len(expectedRows)-1], Col: viewer.cursor.Col}
+	if got := viewer.cursor; got != bottom {
+		t.Fatalf("cursor after down at bottom = %+v, want bottom %+v", got, bottom)
+	}
+}
+
 func TestDiffViewerMouseWheelScrollsWhileEditingComment(t *testing.T) {
 	rows := make([]diff.Row, 8)
 	for i := range rows {
